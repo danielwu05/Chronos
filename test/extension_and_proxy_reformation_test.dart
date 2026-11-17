@@ -19,7 +19,15 @@ void main() {
         );
 
         expect(res.success, isTrue, reason: res.message);
-        expect(res.extensionId, equals('jmbcpjljbgjabggbblfajojeahficjgi'));
+        // The fixed ID only exists where the signing key `chronos_extension.pem` is present
+        // (gitignored, so absent in CI); otherwise a fresh key yields another valid ID.
+        final root = ExtensionPackager.findProjectRoot();
+        final hasSigningKey = root != null && File('$root/chronos_extension.pem').existsSync();
+        if (hasSigningKey) {
+          expect(res.extensionId, equals('jmbcpjljbgjabggbblfajojeahficjgi'));
+        } else {
+          expect(res.extensionId, matches(RegExp(r'^[a-p]{32}$')));
+        }
         expect(ExtensionPackager.compareVersions(res.version, '1.1.0'), greaterThanOrEqualTo(0));
 
         // Verify CRX3 binary header: "Cr24" + version=3 LE
