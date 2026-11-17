@@ -1,0 +1,35 @@
+{
+  "manifest_version": 2,
+  "name": "Chronos Focus - Bloqueador de Sites",
+  "version": "1.1.0",
+  "description": "Bloqueia sites por cota diária e aplica filtros HTML/CSS anti-distração (Shorts, Reels, Feeds e Grayscale).",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "chronos-focus@chronos.local",
+      "strict_min_version": "109.0"
+    }
+  },
+  "permissions": [
+    "tabs",
+    "webNavigation",
+    "storage",
+    "alarms",
+    "<all_urls>",
+    "http://127.0.0.1/*",
+    "http://localhost/*"
+  ],
+  "background": {
+    "scripts": ["focus_filters_core.js", "background.js"]
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["focus_filters_core.js", "focus_hud_panel.js", "content.js"],
+      "run_at": "document_start"
+    }
+  ],
+  "browser_action": {
+    "default_title": "Chronos Focus Engine",
+    "default_popup": "popup.html"
+  }
+}

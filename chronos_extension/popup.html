@@ -1,0 +1,585 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>Chronos Focus</title>
+  <style>
+    * {
+      box-sizing: border-box;
+    }
+    body {
+      width: 320px;
+      margin: 0;
+      padding: 14px;
+      background: #101216;
+      color: #e6edf3;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid #23272e;
+      padding-bottom: 10px;
+      margin-bottom: 10px;
+    }
+    .logo-title {
+      font-weight: 700;
+      font-size: 15px;
+      color: #00b4d8;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .badge {
+      font-size: 10px;
+      padding: 3px 8px;
+      border-radius: 12px;
+      font-weight: 600;
+    }
+    .badge-online {
+      background: rgba(63, 185, 80, 0.2);
+      color: #3fb950;
+      border: 1px solid rgba(63, 185, 80, 0.4);
+    }
+    .badge-offline {
+      background: rgba(248, 81, 73, 0.2);
+      color: #f85149;
+      border: 1px solid rgba(248, 81, 73, 0.4);
+    }
+    .active-tab-card {
+      background: #171b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 10px;
+      margin-bottom: 12px;
+      font-size: 12px;
+    }
+    .active-tab-title {
+      font-weight: bold;
+      color: #79c0ff;
+      margin-bottom: 4px;
+      display: flex;
+      justify-content: space-between;
+    }
+    .active-tab-desc {
+      color: #8b949e;
+      font-size: 11px;
+      word-break: break-all;
+    }
+    .section-title {
+      font-size: 11px;
+      font-weight: bold;
+      color: #8b949e;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 8px;
+    }
+    .popup-tabs {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+      margin-bottom: 10px;
+      background: #171b22;
+      padding: 4px;
+      border-radius: 9px;
+      border: 1px solid #262b33;
+    }
+    .popup-tab-btn {
+      background: transparent;
+      border: 0;
+      color: #8b949e;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 6px 8px;
+      border-radius: 6px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 5px;
+      transition: background 0.15s ease, color 0.15s ease;
+    }
+    .popup-tab-btn:hover {
+      color: #e6edf3;
+    }
+    .popup-tab-btn.is-active {
+      background: rgba(0, 180, 216, 0.16);
+      color: #64ffda;
+      box-shadow: inset 0 0 0 1px rgba(100, 255, 218, 0.25);
+    }
+    .tab-count-badge {
+      background: rgba(255, 255, 255, 0.08);
+      color: inherit;
+      border-radius: 999px;
+      padding: 1px 6px;
+      font-size: 9.5px;
+      font-weight: 700;
+    }
+    .tab-page.is-hidden {
+      display: none;
+    }
+    .sites-list {
+      max-height: 360px;
+      overflow-y: auto;
+    }
+    .site-item {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      padding: 9px 10px;
+      margin-bottom: 7px;
+      background: #1b1f27;
+      border: 1px solid #23272f;
+      border-radius: 8px;
+      font-size: 12px;
+    }
+    .site-top-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 8px;
+    }
+    .site-info {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      min-width: 0;
+      flex: 1;
+    }
+    .site-name {
+      font-weight: 600;
+      color: #ffffff;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .site-pattern {
+      font-size: 10px;
+      color: #8b949e;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .site-dropdown {
+      border-top: 1px solid #242933;
+      padding-top: 5px;
+    }
+    .site-dropdown-summary {
+      font-size: 10.5px;
+      font-weight: 600;
+      color: #64ffda;
+      cursor: pointer;
+      user-select: none;
+      outline: none;
+    }
+    .site-dropdown-items {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+      margin-top: 6px;
+    }
+    .site-dropdown-chip {
+      background: #12161d;
+      border: 1px solid #2b3240;
+      border-radius: 6px;
+      padding: 2px 6px;
+      font-size: 10px;
+      color: #cbd5e1;
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .ac-dropdown {
+      background: #0f131a;
+      border: 1px solid #30363d;
+      border-radius: 7px;
+      max-height: 155px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+    }
+    .ac-dropdown[hidden] {
+      display: none;
+    }
+    .ac-opt {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+      width: 100%;
+      background: transparent;
+      border: 0;
+      border-bottom: 1px solid #1e232b;
+      color: #e6edf3;
+      padding: 5px 8px;
+      font-size: 11px;
+      text-align: left;
+      cursor: pointer;
+    }
+    .ac-opt:last-child {
+      border-bottom: 0;
+    }
+    .ac-opt:hover {
+      background: rgba(100, 255, 218, 0.12);
+    }
+    .ac-opt-left {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+      flex: 1;
+    }
+    .ac-opt-thumb {
+      width: 38px;
+      height: 15px;
+      object-fit: cover;
+      border-radius: 3px;
+      flex-shrink: 0;
+    }
+    .ac-opt-title {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font-weight: 600;
+    }
+    .ac-opt-sub {
+      font-size: 9.5px;
+      color: #8b949e;
+      white-space: nowrap;
+    }
+    .site-status {
+      font-size: 11px;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 6px;
+    }
+    .blocked {
+      background: rgba(248, 81, 73, 0.2);
+      color: #f85149;
+    }
+    .active {
+      background: rgba(63, 185, 80, 0.15);
+      color: #3fb950;
+    }
+    .footer {
+      margin-top: 10px;
+      padding-top: 8px;
+      border-top: 1px solid #23272e;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 11px;
+      color: #8b949e;
+    }
+    .sync-btn {
+      background: #21262d;
+      border: 1px solid #30363d;
+      color: #c9d1d9;
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 11px;
+      cursor: pointer;
+    }
+    .sync-btn:hover {
+      background: #30363d;
+    }
+    .filters-card {
+      background: #171b22;
+      border: 1px solid #30363d;
+      border-radius: 8px;
+      padding: 8px 10px;
+      margin-bottom: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 7px;
+    }
+    .filter-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 11px;
+      color: #c9d1d9;
+      cursor: pointer;
+    }
+    .filter-item input[type="checkbox"] {
+      cursor: pointer;
+      accent-color: #00b4d8;
+    }
+    .hud-toggle-btn {
+      margin-top: 8px;
+      width: 100%;
+      background: #21262d;
+      border: 1px solid #30363d;
+      color: #c9d1d9;
+      padding: 5px 10px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .hud-toggle-btn:hover {
+      background: #30363d;
+      color: #fff;
+    }
+    .ac-warn {
+      display: none;
+      font-size: 10px;
+      color: #ffb300;
+      background: rgba(255, 179, 0, 0.12);
+      border: 1px solid rgba(255, 179, 0, 0.35);
+      border-radius: 6px;
+      padding: 4px 7px;
+      line-height: 1.3;
+    }
+    .ac-warn.is-visible {
+      display: block;
+    }
+    .term-lbl {
+      font-size: 10px;
+      color: #8b949e;
+      font-weight: 600;
+      margin-top: 2px;
+    }
+    .term-row {
+      display: flex;
+      gap: 5px;
+      align-items: center;
+    }
+    .term-in {
+      flex: 1;
+      min-width: 0;
+      background: #0f111a;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      color: #e6edf3;
+      padding: 4px 7px;
+      font-size: 11px;
+    }
+    .term-btn {
+      background: rgba(100, 255, 218, 0.14);
+      border: 1px solid rgba(100, 255, 218, 0.4);
+      color: #64ffda;
+      border-radius: 6px;
+      padding: 4px 8px;
+      font-size: 10.5px;
+      font-weight: 700;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .chip-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+    }
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid #30363d;
+      border-radius: 999px;
+      padding: 2px 7px;
+      font-size: 10px;
+      color: #e6edf3;
+    }
+    .chip-rm {
+      background: transparent;
+      border: 0;
+      color: #8b949e;
+      cursor: pointer;
+      padding: 0;
+      font-size: 11px;
+      line-height: 1;
+    }
+    .chip-rm:hover {
+      color: #ff5252;
+    }
+    .tag-suggest-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px;
+    }
+    .tag-suggest-btn {
+      background: #21262d;
+      border: 1px solid #30363d;
+      color: #8b949e;
+      border-radius: 999px;
+      padding: 2px 7px;
+      font-size: 10px;
+      cursor: pointer;
+    }
+    .tag-suggest-btn:hover {
+      color: #64ffda;
+      border-color: rgba(100, 255, 218, 0.45);
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="logo-title">
+      <span>⏱</span>
+      <span>Chronos Focus</span>
+    </div>
+    <span id="conn-status" class="badge badge-offline">Conectando...</span>
+  </div>
+
+  <div id="active-tab-card" class="active-tab-card">
+    <div class="active-tab-title">
+      <span>Aba em Foco</span>
+      <span id="tab-status-pill">Verificando...</span>
+    </div>
+    <div id="tab-url-text" class="active-tab-desc">Aguardando url...</div>
+    <button id="toggle-hud-btn" class="hud-toggle-btn" hidden>Esconder pílula nesta aba</button>
+  </div>
+
+  <div class="popup-tabs" role="tablist">
+    <button type="button" id="tab-btn-filters" class="popup-tab-btn is-active" data-tab="filters">
+      <span>Filtros &amp; Foco</span>
+    </button>
+    <button type="button" id="tab-btn-sites" class="popup-tab-btn" data-tab="sites">
+      <span>Sites &amp; Sessões</span>
+      <span id="sites-count-badge" class="tab-count-badge">0</span>
+    </button>
+  </div>
+
+  <div id="page-filters" class="tab-page">
+  <div class="section-title">Filtros de Conteúdo (StayFocusd)</div>
+  <div class="filters-card">
+    <div style="font-size:10px;font-weight:700;color:#00e5ff;margin-bottom:2px;">🌐 DETOX GLOBAL</div>
+    <label class="filter-item">
+      <span>Modo Preto e Branco (Grayscale)</span>
+      <input type="checkbox" id="f-grayscale">
+    </label>
+    <label class="filter-item">
+      <span>Bloquear Notificações / Badges</span>
+      <input type="checkbox" id="f-notifications">
+    </label>
+
+    <div style="font-size:10px;font-weight:700;color:#ff5252;margin-top:4px;margin-bottom:2px;">🔴 YOUTUBE</div>
+    <label class="filter-item">
+      <span>Bloquear Shorts</span>
+      <input type="checkbox" id="f-yt-shorts">
+    </label>
+    <label class="filter-item">
+      <span>Modo Educativo (Ocultar Feed Home)</span>
+      <input type="checkbox" id="f-yt-edu">
+    </label>
+    <label class="filter-item">
+      <span>Ocultar Vídeos Relacionados</span>
+      <input type="checkbox" id="f-yt-sidebar">
+    </label>
+    <label class="filter-item">
+      <span>Ocultar Comentários</span>
+      <input type="checkbox" id="f-yt-comments">
+    </label>
+
+    <div style="font-size:10px;font-weight:700;color:#e1306c;margin-top:4px;margin-bottom:2px;">📸 INSTAGRAM</div>
+    <label class="filter-item">
+      <span>Bloquear Reels</span>
+      <input type="checkbox" id="f-ig-reels">
+    </label>
+    <label class="filter-item">
+      <span>Bloquear Feed Principal</span>
+      <input type="checkbox" id="f-ig-feed">
+    </label>
+    <label class="filter-item">
+      <span>Ocultar Comentários</span>
+      <input type="checkbox" id="f-ig-comments">
+    </label>
+
+    <div style="font-size:10px;font-weight:700;color:#25f4ee;margin-top:4px;margin-bottom:2px;">🎵 TIKTOK</div>
+    <label class="filter-item">
+      <span>Bloquear Feed Recomendado</span>
+      <input type="checkbox" id="f-tt-feed">
+    </label>
+
+    <div style="font-size:10px;font-weight:700;color:#ff4500;margin-top:4px;margin-bottom:2px;">🤖 REDDIT</div>
+    <label class="filter-item">
+      <span>Bloquear Feed Principal</span>
+      <input type="checkbox" id="f-rd-feed">
+    </label>
+    <label class="filter-item">
+      <span>Ocultar Comentários</span>
+      <input type="checkbox" id="f-rd-comments">
+    </label>
+
+    <div style="font-size:10px;font-weight:700;color:#1da1f2;margin-top:4px;margin-bottom:2px;">🐦 X (TWITTER)</div>
+    <label class="filter-item">
+      <span>Bloquear Timeline</span>
+      <input type="checkbox" id="f-tw-feed">
+    </label>
+    <label class="filter-item">
+      <span>Ocultar Assuntos do Momento</span>
+      <input type="checkbox" id="f-tw-trends">
+    </label>
+
+    <div style="font-size:10px;font-weight:700;color:#0a66c2;margin-top:4px;margin-bottom:2px;">💼 LINKEDIN</div>
+    <label class="filter-item">
+      <span>Bloquear Feed de Notícias</span>
+      <input type="checkbox" id="f-li-feed">
+    </label>
+
+    <div style="font-size:10px;font-weight:700;color:#ffb300;margin-top:6px;margin-bottom:2px;">🎮 LAUNCHERS & JOGOS</div>
+    <div id="launcher-ac-warning" class="ac-warn">🔒 Anti-Cheat ativo: desative para remover tags/nomes ou desligar o filtro.</div>
+    <label class="filter-item">
+      <span>Bloquear jogos por tag/nome (Launchers & Web)</span>
+      <input type="checkbox" id="f-launcher-enabled" checked>
+    </label>
+    <div class="term-lbl">Tags bloqueadas (Steam API)</div>
+    <div class="term-row">
+      <input type="text" id="f-launcher-tag-in" class="term-in" placeholder="Buscar tag (ex: Ação, Souls-like, Terror)...">
+      <button type="button" id="f-launcher-tag-add" class="term-btn">+ Add</button>
+    </div>
+    <div id="f-launcher-tag-ac" class="ac-dropdown" hidden></div>
+    <div id="f-launcher-tag-chips" class="chip-list"></div>
+    <div id="f-steam-tag-suggestions" class="tag-suggest-list"></div>
+    <div class="term-lbl">Nomes / jogos bloqueados</div>
+    <div class="term-row">
+      <input type="text" id="f-launcher-name-in" class="term-in" placeholder="Buscar jogo na Steam API...">
+      <button type="button" id="f-launcher-name-add" class="term-btn">+ Add</button>
+    </div>
+    <div id="f-launcher-name-ac" class="ac-dropdown" hidden></div>
+    <div id="f-launcher-name-chips" class="chip-list"></div>
+
+    <div style="font-size:10px;font-weight:700;color:#64ffda;margin-top:6px;margin-bottom:2px;">🎯 HUD DA PÍLULA</div>
+    <label class="filter-item" style="flex-direction:column;align-items:stretch;gap:4px;cursor:default;">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <span>Opacidade da Pílula (Alfa)</span>
+        <span id="f-hud-alpha-val" style="color:#64ffda;font-weight:700;">94%</span>
+      </div>
+      <input type="range" id="f-hud-alpha" min="15" max="100" step="5" value="94" style="width:100%;accent-color:#00bfa5;cursor:pointer;">
+    </label>
+    <label class="filter-item" style="flex-direction:column;align-items:stretch;gap:4px;cursor:default;">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <span>Tamanho da Pílula</span>
+        <span id="f-hud-scale-val" style="color:#64ffda;font-weight:700;">100%</span>
+      </div>
+      <input type="range" id="f-hud-scale" min="70" max="160" step="5" value="100" style="width:100%;accent-color:#00bfa5;cursor:pointer;">
+    </label>
+    <label class="filter-item">
+      <span>Ao esconder, virar Olho arrastável</span>
+      <input type="checkbox" id="f-hud-hide-eye" checked>
+    </label>
+  </div>
+  </div>
+
+  <div id="page-sites" class="tab-page is-hidden">
+    <div class="section-title">Sites e Sessões Monitoradas</div>
+
+    <div id="sites-container" class="sites-list">
+      <div style="text-align: center; padding: 20px; font-size: 12px; color: #8b949e;">
+        Carregando regras de sites...
+      </div>
+    </div>
+  </div>
+
+  <div class="footer">
+    <span id="port-label">Daemon :4545</span>
+    <button id="sync-btn" class="sync-btn">Sincronizar</button>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

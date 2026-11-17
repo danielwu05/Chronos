@@ -1,0 +1,449 @@
+#!/usr/bin/env bash
+# Chronos Guard - Protetor permanente das extensões, certificados e políticas dos navegadores.
+# Comandos:
+#   apply [--quiet]                Aplica/restaura políticas, update.xml, CA e PAC nos navegadores
+#   update-crx <crx> <versão>      Publica nova versão CRX3 assinada e reaplica
+#   update-ca <ca_crt> <pac_file>  Atualiza Root CA público e arquivo PAC e reaplica
+#   watch                          Loop do serviço systemd: restaura políticas a cada 5s
+#   status                         Exibe estado atual do serviço e navegadores protegidos
+#   uninstall                      Remove políticas, certificado CA, polkit e serviço systemd
+
+set -euo pipefail
+
+STORE="/usr/local/share/chronos"
+CRX="$STORE/chronos.crx"
+XPI="$STORE/chronos.xpi"
+UPDATE_XML="$STORE/update.xml"
+CA_CERT="$STORE/chronos-proxy-ca.crt"
+PAC_FILE="$STORE/proxy.pac"
+CONF="$STORE/guard.conf"
+POLICY_NAME="chronos-focus.json"
+
+ARCH_CA_ANCHOR="/etc/ca-certificates/trust-source/anchors/chronos-proxy-ca.crt"
+DEBIAN_CA_ANCHOR="/usr/local/share/ca-certificates/chronos-proxy-ca.crt"
+
+# Navegadores baseados em Chromium ("<diretório_managed>|<caminhos_de_detecção>")
+BROWSERS=(
+  "/etc/opt/chrome/policies/managed|/opt/google/chrome /usr/bin/google-chrome /usr/bin/google-chrome-stable"
+  "/etc/opt/chrome-beta/policies/managed|/opt/google/chrome-beta /usr/bin/google-chrome-beta"
+  "/etc/opt/chrome-unstable/policies/managed|/opt/google/chrome-unstable /usr/bin/google-chrome-unstable"
+  "/etc/chromium/policies/managed|/usr/lib/chromium /usr/bin/chromium /usr/bin/chromium-browser /snap/bin/chromium"
+  "/var/snap/chromium/current/policies/managed|/snap/bin/chromium"
+  "/etc/brave/policies/managed|/opt/brave.com/brave /usr/bin/brave /usr/bin/brave-browser /snap/bin/brave"
+  "/etc/opt/edge/policies/managed|/opt/microsoft/msedge /usr/bin/microsoft-edge /usr/bin/microsoft-edge-stable"
+  "/etc/vivaldi/policies/managed|/opt/vivaldi /usr/bin/vivaldi /usr/bin/vivaldi-stable"
+  "/etc/opera/policies/managed|/usr/lib/opera /usr/bin/opera /snap/bin/opera"
+  "/etc/thorium/policies/managed|/opt/thorium /usr/bin/thorium-browser"
+)
+
+# Navegadores baseados em Gecko ("<diretório_policies>|<caminhos_de_detecção>")
+FIREFOX_BROWSERS=(
+  "/etc/firefox/policies|/usr/lib/firefox /opt/firefox-bin /usr/bin/firefox /snap/bin/firefox"
+  "/etc/firefox-esr/policies|/usr/lib/firefox-esr /usr/bin/firefox-esr"
+  "/etc/librewolf/policies|/usr/lib/librewolf /usr/bin/librewolf"
+  "/etc/zen-browser/policies|/opt/zen-browser-bin /usr/lib/zen-browser /usr/bin/zen-browser"
+  "/etc/floorp/policies|/usr/lib/floorp /opt/floorp /usr/bin/floorp"
+  "/etc/waterfox/policies|/usr/lib/waterfox /opt/waterfox /usr/bin/waterfox"
+)
+
+die() { echo "chronos-guard: erro: $*" >&2; exit 1; }
+
+load_conf() {
+  EXTENSION_ID="jmbcpjljbgjabggbblfajojeahficjgi"
+  FIREFOX_ADDON_ID="chronos-focus@chronos.local"
+  VERSION="1.1.0"
+  BLOCK_INCOGNITO=1
+  BLOCK_GUEST=1
+  PROXY_PORT="4546"
+  # shellcheck disable=SC1090
+  [ -f "$CONF" ] && . "$CONF"
+  [[ "$EXTENSION_ID" =~ ^[a-p]{32}$ ]] || die "extension id inválido em $CONF"
+  [[ "$VERSION" =~ ^[0-9]+(\.[0-9]+){0,3}$ ]] || die "versão inválida em $CONF"
+}
+
+browser_present() {
+  local paths="$1"
+  local policy_dir="$2"
+  local parent_dir
+  parent_dir="$(dirname "$policy_dir")"
+  for p in $paths; do
+    if [ -e "$p" ]; then
+      return 0
+    fi
+  done
+  [ -d "$parent_dir" ]
+}
+
+write_if_changed() {
+  local path="$1"
+  local desired="$2"
+  local mode="${3:-0644}"
+  if [ -f "$path" ] && [ "$(cat "$path")" = "$desired" ]; then
+    return 1
+  fi
+  local dir tmp
+  dir="$(dirname "$path")"
+  install -d -m 0755 "$dir"
+  tmp="$(mktemp "$dir/.chronos-guard.XXXXXX")"
+  printf '%s\n' "$desired" > "$tmp"
+  chmod "$mode" "$tmp"
+  chown root:root "$tmp"
+  mv -f "$tmp" "$path"
+  return 0
+}
+
+render_update_xml() {
+  cat <<EOF
+<?xml version='1.0' encoding='UTF-8'?>
+<gupdate xmlns='http://www.google.com/update2/response' protocol='2.0'>
+  <app appid='$EXTENSION_ID'>
+    <updatecheck codebase='file://$CRX' version='$VERSION' />
+  </app>
+</gupdate>
+EOF
+}
+
+render_pac_file() {
+  local port="${PROXY_PORT:-4546}"
+  cat <<EOF
+function FindProxyForURL(url, host) {
+  if (isPlainHostName(host) ||
+      shExpMatch(host, "127.*") ||
+      shExpMatch(host, "10.*") ||
+      shExpMatch(host, "192.168.*") ||
+      host === "localhost" ||
+      host === "::1") {
+    return "DIRECT";
+  }
+  return "PROXY 127.0.0.1:$port; DIRECT";
+}
+EOF
+}
+
+render_chromium_policy() {
+  # Chromium's extension updater fetches through the network stack and cannot read
+  # file:// update manifests/CRX codebases, so updates are served by chronos_proxy
+  # on loopback HTTP. (No minimum_version_required: it would disable the extension
+  # whenever the daemon is down.)
+  local update_url="${EXTENSION_UPDATE_URL:-http://127.0.0.1:4545/extension/update.xml}"
+  local lines=(
+    "  \"ExtensionInstallForcelist\": [\"$EXTENSION_ID;$update_url\"]"
+    "  \"ExtensionSettings\": {\"$EXTENSION_ID\": {\"installation_mode\": \"force_installed\", \"update_url\": \"$update_url\"}}"
+  )
+  [ "${BLOCK_INCOGNITO:-1}" -eq 1 ] && lines+=("  \"IncognitoModeAvailability\": 1")
+  [ "${BLOCK_GUEST:-1}" -eq 1 ] && lines+=("  \"BrowserGuestModeEnabled\": false")
+  lines+=("  \"QuicAllowed\": false")
+
+  echo "{"
+  local i last=$((${#lines[@]} - 1))
+  for i in "${!lines[@]}"; do
+    if [ "$i" -lt "$last" ]; then
+      echo "${lines[$i]},"
+    else
+      echo "${lines[$i]}"
+    fi
+  done
+  echo "}"
+}
+
+xpi_has_mozilla_signature() {
+  local xpi_path="${1:-$XPI}"
+  [ -f "$xpi_path" ] || return 1
+  if command -v unzip >/dev/null 2>&1; then
+    unzip -l "$xpi_path" 2>/dev/null | grep -q 'META-INF/mozilla\.rsa' && return 0
+  elif command -v python3 >/dev/null 2>&1; then
+    python3 -c 'import sys, zipfile; z=zipfile.ZipFile(sys.argv[1]); sys.exit(0 if "META-INF/mozilla.rsa" in z.namelist() else 1)' "$xpi_path" 2>/dev/null && return 0
+  fi
+  return 1
+}
+
+cleanup_legacy_user_firefox_policies() {
+  local p
+  for p in /home/*/.mozilla/firefox/policies/policies.json /home/*/.config/mozilla/firefox/policies/policies.json /root/.mozilla/firefox/policies/policies.json; do
+    [ -f "$p" ] || continue
+    if grep -Eq 'chronos-focus@chronos\.local|chronos_blocker@chronos\.local' "$p" 2>/dev/null; then
+      rm -f "$p"
+    fi
+  done
+}
+
+render_firefox_policy() {
+  local include_extension="${1:-1}"
+  local blocks=()
+
+  if [ "$include_extension" -eq 1 ] && [ -f "$XPI" ]; then
+    blocks+=("$(cat <<EOF
+    "ExtensionSettings": {
+      "$FIREFOX_ADDON_ID": {
+        "installation_mode": "force_installed",
+        "install_url": "file://$XPI"
+      }
+    }
+EOF
+)")
+  fi
+
+  if [ "${BLOCK_INCOGNITO:-1}" -eq 1 ]; then
+    blocks+=("    \"DisablePrivateBrowsing\": true")
+  fi
+
+  if [ -f "$CA_CERT" ]; then
+    blocks+=("$(cat <<EOF
+    "Certificates": {
+      "ImportEnterpriseRoots": true,
+      "Install": ["$CA_CERT"]
+    }
+EOF
+)")
+    blocks+=("$(cat <<EOF
+    "Proxy": {
+      "Mode": "autoConfig",
+      "AutoConfigURL": "file://$PAC_FILE",
+      "Locked": true
+    }
+EOF
+)")
+    blocks+=("$(cat <<EOF
+    "Preferences": {
+      "network.http.http3.enabled": {
+        "Value": false,
+        "Status": "locked"
+      }
+    }
+EOF
+)")
+  fi
+
+  echo "{"
+  echo "  \"policies\": {"
+  local i last=$((${#blocks[@]} - 1))
+  for i in "${!blocks[@]}"; do
+    if [ "$i" -lt "$last" ]; then
+      echo "${blocks[$i]},"
+    else
+      echo "${blocks[$i]}"
+    fi
+  done
+  echo "  }"
+  echo "}"
+}
+
+sync_system_ca_trust() {
+  [ -f "$CA_CERT" ] || return 0
+  local updated=0
+  if [ -d "/etc/ca-certificates/trust-source/anchors" ]; then
+    if ! [ -f "$ARCH_CA_ANCHOR" ] || ! cmp -s "$CA_CERT" "$ARCH_CA_ANCHOR"; then
+      install -m 0644 -o root -g root "$CA_CERT" "$ARCH_CA_ANCHOR"
+      updated=1
+    fi
+    if [ "$updated" -eq 1 ] && command -v trust >/dev/null 2>&1; then
+      trust extract-compat >/dev/null 2>&1 || true
+    fi
+  elif [ -d "/usr/local/share/ca-certificates" ]; then
+    if ! [ -f "$DEBIAN_CA_ANCHOR" ] || ! cmp -s "$CA_CERT" "$DEBIAN_CA_ANCHOR"; then
+      install -m 0644 -o root -g root "$CA_CERT" "$DEBIAN_CA_ANCHOR"
+      updated=1
+    fi
+    if [ "$updated" -eq 1 ] && command -v update-ca-certificates >/dev/null 2>&1; then
+      update-ca-certificates >/dev/null 2>&1 || true
+    fi
+  fi
+}
+
+cmd_apply() {
+  local quiet=0
+  [ "${1:-}" = "--quiet" ] && quiet=1
+  load_conf
+  [ -f "$CRX" ] || die "pacote da extensão ausente: $CRX"
+
+  local changed=0
+  write_if_changed "$UPDATE_XML" "$(render_update_xml)" && changed=1 || true
+  write_if_changed "$PAC_FILE" "$(render_pac_file)" && changed=1 || true
+  sync_system_ca_trust
+
+  local chromium_json firefox_release_json firefox_fork_json
+  local include_release_ext=0
+  if xpi_has_mozilla_signature "$XPI"; then
+    include_release_ext=1
+  fi
+  chromium_json="$(render_chromium_policy)"
+  firefox_release_json="$(render_firefox_policy "$include_release_ext")"
+  firefox_fork_json="$(render_firefox_policy 1)"
+  cleanup_legacy_user_firefox_policies
+
+  for entry in "${BROWSERS[@]}"; do
+    local dir="${entry%%|*}"
+    local bins="${entry#*|}"
+    if browser_present "$bins" "$dir"; then
+      write_if_changed "$dir/$POLICY_NAME" "$chromium_json" && changed=1 || true
+    fi
+  done
+
+  for entry in "${FIREFOX_BROWSERS[@]}"; do
+    local dir="${entry%%|*}"
+    local bins="${entry#*|}"
+    if browser_present "$bins" "$dir"; then
+      if [ "$dir" = "/etc/firefox/policies" ]; then
+        write_if_changed "$dir/policies.json" "$firefox_release_json" && changed=1 || true
+      else
+        write_if_changed "$dir/policies.json" "$firefox_fork_json" && changed=1 || true
+      fi
+    fi
+  done
+
+  if [ "$quiet" -eq 0 ]; then
+    echo "chronos-guard: políticas aplicadas (alterações=$changed, versão=$VERSION)"
+  fi
+}
+
+cmd_update_crx() {
+  local src="${1:-}" ver="${2:-}"
+  [ -n "$src" ] && [ -n "$ver" ] || die "uso: chronos-guard update-crx <arquivo.crx> <versão>"
+  [ -f "$src" ] || die "arquivo não encontrado: $src"
+  [[ "$ver" =~ ^[0-9]+(\.[0-9]+){0,3}$ ]] || die "versão inválida: $ver"
+  [ "$(head -c 4 "$src")" = "Cr24" ] || die "arquivo não é um pacote CRX3 válido"
+
+  install -d -m 0755 "$STORE"
+  install -m 0644 -o root -g root "$src" "$CRX.new" && mv -f "$CRX.new" "$CRX"
+  local src_xpi
+  src_xpi="$(dirname "$src")/chronos.xpi"
+  if [ -f "$src_xpi" ]; then
+    install -m 0644 -o root -g root "$src_xpi" "$XPI.new" && mv -f "$XPI.new" "$XPI"
+  fi
+  if [ -f "$CONF" ]; then
+    if grep -q '^VERSION=' "$CONF"; then
+      sed -i "s/^VERSION=.*/VERSION=\"$ver\"/" "$CONF"
+    else
+      echo "VERSION=\"$ver\"" >> "$CONF"
+    fi
+  fi
+  cmd_apply
+}
+
+cmd_update_ca() {
+  local src_ca="${1:-}" src_pac="${2:-}"
+  [ -n "$src_ca" ] && [ -f "$src_ca" ] || die "certificado CA ausente: $src_ca"
+  grep -q "BEGIN CERTIFICATE" "$src_ca" || die "arquivo não é um certificado PEM válido"
+
+  install -d -m 0755 "$STORE"
+  install -m 0644 -o root -g root "$src_ca" "$CA_CERT.new" && mv -f "$CA_CERT.new" "$CA_CERT"
+  if [ -n "$src_pac" ] && [ -f "$src_pac" ]; then
+    install -m 0644 -o root -g root "$src_pac" "$PAC_FILE.new" && mv -f "$PAC_FILE.new" "$PAC_FILE"
+  fi
+  cmd_apply
+}
+
+cmd_watch() {
+  while true; do
+    cmd_apply --quiet 2>/dev/null || true
+    sleep 5
+  done
+}
+
+cmd_status() {
+  local installed=0 running=0
+  [ -f "$CONF" ] && installed=1
+  systemctl is-active --quiet chronos-guard.service 2>/dev/null && running=1
+  echo "installed=$installed"
+  echo "running=$running"
+  echo "ca_present=$([ -f "$CA_CERT" ] && echo 1 || echo 0)"
+  echo "pac_present=$([ -f "$PAC_FILE" ] && echo 1 || echo 0)"
+  if [ "$installed" -eq 1 ]; then
+    grep -E '^(EXTENSION_ID|FIREFOX_ADDON_ID|VERSION|BLOCK_INCOGNITO|BLOCK_GUEST)=' "$CONF" | tr -d '"' || true
+  fi
+  for entry in "${BROWSERS[@]}"; do
+    local dir="${entry%%|*}"
+    if [ -f "$dir/$POLICY_NAME" ]; then echo "policy=$dir:ok"; fi
+  done
+  for entry in "${FIREFOX_BROWSERS[@]}"; do
+    local dir="${entry%%|*}"
+    if [ -f "$dir/policies.json" ]; then
+      if grep -q "chronos-proxy-ca.crt" "$dir/policies.json" 2>/dev/null; then
+        echo "policy=$dir:ok_proxy"
+      else
+        echo "policy=$dir:ok_legacy"
+      fi
+    fi
+  done
+}
+
+assert_anti_cheat_inactive_for_uninstall() {
+  if command -v python3 >/dev/null 2>&1; then
+    local py_err=""
+    py_err="$(python3 - <<'PY' 2>/dev/null
+import glob, json, os, sqlite3, time, urllib.request
+
+# 1. Verifica API local viva do Chronos, se estiver respondendo
+try:
+    with urllib.request.urlopen("http://127.0.0.1:4545/api/status", timeout=1.5) as resp:
+        data = json.loads(resp.read().decode("utf-8", errors="ignore"))
+        if data.get("antiCheatActive") is True:
+            mode = data.get("antiCheatMode") or "ATIVO"
+            print(f"Anti-Cheat ativo na sessão ({mode}). Desative no Chronos antes de remover.")
+            raise SystemExit(10)
+except SystemExit:
+    raise
+except Exception:
+    pass
+
+# 2. Defesa em profundidade: consulta direto o SQLite caso o app esteja fechado
+now = int(time.time())
+for db_path in glob.glob("/home/*/Documents/chronos.db") + ["/root/Documents/chronos.db"]:
+    if not os.path.isfile(db_path):
+        continue
+    try:
+        conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        rows = dict(conn.execute(
+            "SELECT key, value FROM app_config WHERE key IN ('anti_cheat_mode','anti_cheat_nuke_until_utc')"
+        ).fetchall())
+        conn.close()
+        mode = (rows.get("anti_cheat_mode") or "OFF").upper()
+        nuke_until = int(rows.get("anti_cheat_nuke_until_utc") or "0")
+        if mode == "CHALLENGE" or (mode == "NUKE" and now < nuke_until):
+            print(f"Anti-Cheat ativo no banco ({mode}). Conclua o desafio ou aguarde expirar.")
+            raise SystemExit(10)
+    except SystemExit:
+        raise
+    except Exception:
+        pass
+PY
+)" || {
+      local py_rc=$?
+      if [ "$py_rc" -eq 10 ] && [ -n "$py_err" ]; then
+        die "$py_err"
+      fi
+    }
+  elif command -v curl >/dev/null 2>&1; then
+    if curl -fsS --max-time 1.5 http://127.0.0.1:4545/api/status 2>/dev/null | grep -q '"antiCheatActive":true'; then
+      die "Anti-Cheat ativo na sessão. Desative no Chronos antes de remover."
+    fi
+  fi
+}
+
+cmd_uninstall() {
+  assert_anti_cheat_inactive_for_uninstall
+  systemctl disable --now chronos-guard.service 2>/dev/null || true
+  rm -f /etc/systemd/system/chronos-guard.service
+  for entry in "${BROWSERS[@]}"; do rm -f "${entry%%|*}/$POLICY_NAME"; done
+  for entry in "${FIREFOX_BROWSERS[@]}"; do rm -f "${entry%%|*}/policies.json"; done
+  cleanup_legacy_user_firefox_policies
+  rm -f "$ARCH_CA_ANCHOR" "$DEBIAN_CA_ANCHOR"
+  command -v trust >/dev/null 2>&1 && trust extract-compat >/dev/null 2>&1 || true
+  command -v update-ca-certificates >/dev/null 2>&1 && update-ca-certificates >/dev/null 2>&1 || true
+  rm -f /etc/polkit-1/rules.d/49-chronos-guard.rules
+  rm -f /usr/share/polkit-1/actions/org.chronos.guard.policy
+  rm -f /usr/local/bin/chronos-guard
+  rm -rf "$STORE" /usr/local/lib/chronos
+  systemctl daemon-reload 2>/dev/null || true
+  echo "chronos-guard: removido completamente."
+}
+
+case "${1:-}" in
+  apply)      cmd_apply "${2:-}" ;;
+  update-crx) cmd_update_crx "${2:-}" "${3:-}" ;;
+  update-ca)  cmd_update_ca "${2:-}" "${3:-}" ;;
+  watch)      cmd_watch ;;
+  status)     cmd_status ;;
+  uninstall)  cmd_uninstall ;;
+  *) echo "uso: chronos-guard {apply|update-crx <crx> <versão>|update-ca <ca.crt> <proxy.pac>|watch|status|uninstall}" >&2; exit 2 ;;
+esac
