@@ -9,6 +9,8 @@ import '../services/web_block_server.dart';
 import '../src/rust/api/simple.dart';
 import 'anti_cheat_dialog.dart';
 import 'browser_protection_panel.dart';
+import 'update_dialog.dart';
+import '../services/app_version.dart';
 
 class _LauncherSuggestionOption {
   final String value;
@@ -662,6 +664,32 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
 
           // 0. Aparência e Modo de Tema
           _buildThemeCard(),
+          const SizedBox(height: 16),
+
+          // 0.1 Versão e atualizações
+          _buildCard(
+            title: 'Versão e Atualizações',
+            icon: Icons.system_update_alt,
+            iconColor: Colors.lightBlueAccent,
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    isReleaseBuild
+                        ? 'Chronos $appVersion — as atualizações são verificadas ao abrir o app.'
+                        : 'Chronos $appVersion (build de desenvolvimento — sem atualização automática).',
+                    style: const TextStyle(fontSize: 13),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                OutlinedButton.icon(
+                  icon: const Icon(Icons.refresh, size: 16),
+                  label: const Text('Procurar atualizações'),
+                  onPressed: () => checkAndPromptForUpdate(context, manual: true),
+                ),
+              ],
+            ),
+          ),
           const SizedBox(height: 16),
 
           // 1. Notificações de Desktop

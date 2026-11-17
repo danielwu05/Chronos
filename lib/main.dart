@@ -20,6 +20,7 @@ import 'package:chronos_app/widgets/focus_overlay.dart';
 import 'package:chronos_app/widgets/quarantine_view.dart';
 import 'package:chronos_app/widgets/rules_view.dart';
 import 'package:chronos_app/widgets/general_settings_view.dart';
+import 'package:chronos_app/widgets/update_dialog.dart';
 
 final ValueNotifier<ThemeMode> themeModeNotifier = ValueNotifier<ThemeMode>(ThemeMode.dark);
 
@@ -248,6 +249,10 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
     _initHomeAndExtensions();
     _startStream();
+    // Self-update: ask once per app start when a newer signed release exists.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(checkAndPromptForUpdate(context));
+    });
 
     _nukeTicker = Timer.periodic(const Duration(seconds: 1), (_) {
       if (_antiCheatState != null && _antiCheatState!.mode == 'NUKE' && _antiCheatState!.nukeRemainingSeconds > 0) {

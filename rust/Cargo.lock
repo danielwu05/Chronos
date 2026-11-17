@@ -882,6 +882,7 @@ dependencies = [
  "httparse",
  "openssl",
  "parking_lot",
+ "ring",
  "rusqlite",
  "rustls",
  "rustls-native-certs",

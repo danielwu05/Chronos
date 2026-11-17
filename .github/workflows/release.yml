@@ -1,0 +1,126 @@
+name: Release
+
+# Publishes a signed Chronos release when a tag vX.Y.Z is pushed (see scripts/release.sh).
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  linux-x64:
+    # Older glibc (2.35) so the binary runs on most distros, Arch included.
+    runs-on: ubuntu-22.04
+    env:
+      FLUTTER_VERSION: "3.47.9"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve version from tag
+        id: ver
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          PUBSPEC="$(grep -E '^version:' pubspec.yaml | sed -E 's/version:[[:space:]]*([0-9.]+).*/\1/')"
+          if [ "$VERSION" != "$PUBSPEC" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME não confere com pubspec.yaml ($PUBSPEC). Use scripts/release.sh."
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: System dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang cmake ninja-build pkg-config libgtk-3-dev liblzma-dev \
+            libssl-dev libstdc++-12-dev jq
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: Build daemon (must exist before the Flutter bundle step)
+        working-directory: rust
+        run: cargo build --release --bin chronos_proxy
+
+      - name: Rust tests
+        working-directory: rust
+        run: cargo test --lib --bins
+
+      - name: Flutter tests
+        run: |
+          flutter pub get
+          flutter test
+
+      - name: Build Linux bundle
+        run: |
+          flutter build linux --release \
+            --build-name "${{ steps.ver.outputs.version }}" \
+            --dart-define=CHRONOS_VERSION=${{ steps.ver.outputs.version }}
+          test -x build/linux/x64/release/bundle/chronos_app
+          test -f build/linux/x64/release/bundle/chronos_proxy
+          test -f build/linux/x64/release/bundle/data/chronos_assets/chronos_extension/manifest.json
+
+      - name: Package, manifest and signature
+        env:
+          SIGNING_KEY: ${{ secrets.CHRONOS_UPDATE_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          [ -n "$SIGNING_KEY" ] || { echo "::error::Secret CHRONOS_UPDATE_SIGNING_KEY ausente"; exit 1; }
+          VERSION="${{ steps.ver.outputs.version }}"
+          mkdir -p dist
+          ARCHIVE="chronos-linux-x64-$VERSION.tar.gz"
+          tar -czf "dist/$ARCHIVE" -C build/linux/x64/release/bundle .
+
+          PREV_TAG="$(git describe --tags --abbrev=0 "${GITHUB_REF_NAME}^" 2>/dev/null || true)"
+          if [ -n "$PREV_TAG" ]; then
+            git log --pretty='- %s' "$PREV_TAG..$GITHUB_REF_NAME" | grep -v '^- Release v' > dist/notes.md || true
+          fi
+          [ -s dist/notes.md ] || echo "- Chronos $VERSION" > dist/notes.md
+
+          jq -n \
+            --arg version "$VERSION" \
+            --arg published "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --rawfile notes dist/notes.md \
+            --arg name "$ARCHIVE" \
+            --arg sha "$(sha256sum "dist/$ARCHIVE" | cut -d' ' -f1)" \
+            --argjson size "$(stat -c %s "dist/$ARCHIVE")" \
+            --arg guard "$(sha256sum system/guard/chronos-guard | cut -d' ' -f1)" \
+            '{version:$version, published_at:$published, notes:$notes,
+              assets:{"linux-x64":{name:$name, sha256:$sha, size:$size}},
+              guard_sha256:$guard}' > dist/latest.json
+
+          umask 077
+          printf '%s\n' "$SIGNING_KEY" > "$RUNNER_TEMP/signing.pem"
+          openssl pkeyutl -sign -inkey "$RUNNER_TEMP/signing.pem" -rawin -in dist/latest.json \
+            | base64 -w0 > dist/latest.json.sig
+          rm -f "$RUNNER_TEMP/signing.pem"
+
+          cp scripts/install.sh dist/install.sh
+          ls -la dist
+
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${{ steps.ver.outputs.version }}"
+          gh release create "$GITHUB_REF_NAME" \
+            --title "Chronos $VERSION" \
+            --notes-file dist/notes.md \
+            "dist/chronos-linux-x64-$VERSION.tar.gz" \
+            dist/latest.json \
+            dist/latest.json.sig \
+            dist/install.sh

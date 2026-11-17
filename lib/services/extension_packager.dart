@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'app_version.dart';
 import 'package:chronos_app/services/web_block_server.dart';
 
 /// Result returned by [ExtensionPackager.packageAll].
@@ -44,6 +45,13 @@ class ExtensionPackager {
     final exeDir =
         File(executablePathOverride ?? Platform.resolvedExecutable).parent.path;
     final bundledAssets = '$exeDir/data/chronos_assets';
+    // Installed releases must only use their own bundled assets, never a source
+    // checkout found via the working directory.
+    if ((overrideRoot == null || overrideRoot.isEmpty) &&
+        isRunningFromInstallRoot(executablePath: executablePathOverride) &&
+        File('$bundledAssets/chronos_extension/manifest.json').existsSync()) {
+      return bundledAssets;
+    }
     final candidates = <String>[
       if (overrideRoot != null && overrideRoot.isNotEmpty) overrideRoot,
       if (executablePathOverride != null &&

@@ -24,6 +24,8 @@ rustls-native-certs = "0.8"
 rustls-pki-types = "1.12"
 openssl = "0.10"
 flate2 = "1.1"
+# Ed25519 verification + SHA-256 for signed self-updates (already pulled in by rustls).
+ring = "0.17"
 httparse = "1.8"
 
 [lints.rust]

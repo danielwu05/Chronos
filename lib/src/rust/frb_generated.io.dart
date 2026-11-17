@@ -4,6 +4,7 @@
 // ignore_for_file: unused_import, unused_element, unnecessary_import, duplicate_ignore, invalid_use_of_internal_member, annotate_overrides, non_constant_identifier_names, curly_braces_in_flow_control_structures, prefer_const_literals_to_create_immutables, unused_field
 
 import 'api/simple.dart';
+import 'api/updater.dart';
 
 import 'dart:async';
 import 'dart:convert';
@@ -69,6 +70,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   FocusFiltersDto dco_decode_focus_filters_dto(dynamic raw);
 
   @protected
+  int dco_decode_i_32(dynamic raw);
+
+  @protected
   PlatformInt64 dco_decode_i_64(dynamic raw);
 
   @protected
@@ -90,10 +94,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<LauncherGameDto> dco_decode_list_launcher_game_dto(dynamic raw);
 
   @protected
+  List<int> dco_decode_list_prim_u_8_loose(dynamic raw);
+
+  @protected
   Uint8List dco_decode_list_prim_u_8_strict(dynamic raw);
 
   @protected
   List<QuarantineItemDto> dco_decode_list_quarantine_item_dto(dynamic raw);
+
+  @protected
+  List<ReleaseAssetDto> dco_decode_list_release_asset_dto(dynamic raw);
 
   @protected
   List<RuleItemDto> dco_decode_list_rule_item_dto(dynamic raw);
@@ -137,6 +147,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   QuarantineItemDto dco_decode_quarantine_item_dto(dynamic raw);
+
+  @protected
+  ReleaseAssetDto dco_decode_release_asset_dto(dynamic raw);
+
+  @protected
+  ReleaseManifestDto dco_decode_release_manifest_dto(dynamic raw);
 
   @protected
   RuleItemDto dco_decode_rule_item_dto(dynamic raw);
@@ -221,6 +237,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   FocusFiltersDto sse_decode_focus_filters_dto(SseDeserializer deserializer);
 
   @protected
+  int sse_decode_i_32(SseDeserializer deserializer);
+
+  @protected
   PlatformInt64 sse_decode_i_64(SseDeserializer deserializer);
 
   @protected
@@ -248,10 +267,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  List<int> sse_decode_list_prim_u_8_loose(SseDeserializer deserializer);
+
+  @protected
   Uint8List sse_decode_list_prim_u_8_strict(SseDeserializer deserializer);
 
   @protected
   List<QuarantineItemDto> sse_decode_list_quarantine_item_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  List<ReleaseAssetDto> sse_decode_list_release_asset_dto(
     SseDeserializer deserializer,
   );
 
@@ -313,6 +340,14 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  ReleaseAssetDto sse_decode_release_asset_dto(SseDeserializer deserializer);
+
+  @protected
+  ReleaseManifestDto sse_decode_release_manifest_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   RuleItemDto sse_decode_rule_item_dto(SseDeserializer deserializer);
 
   @protected
@@ -346,9 +381,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   WhitelistGroupDto sse_decode_whitelist_group_dto(
     SseDeserializer deserializer,
   );
-
-  @protected
-  int sse_decode_i_32(SseDeserializer deserializer);
 
   @protected
   void sse_encode_AnyhowException(
@@ -426,6 +458,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_i_32(int self, SseSerializer serializer);
+
+  @protected
   void sse_encode_i_64(PlatformInt64 self, SseSerializer serializer);
 
   @protected
@@ -462,6 +497,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_list_prim_u_8_loose(List<int> self, SseSerializer serializer);
+
+  @protected
   void sse_encode_list_prim_u_8_strict(
     Uint8List self,
     SseSerializer serializer,
@@ -470,6 +508,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_list_quarantine_item_dto(
     List<QuarantineItemDto> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_release_asset_dto(
+    List<ReleaseAssetDto> self,
     SseSerializer serializer,
   );
 
@@ -549,6 +593,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_release_asset_dto(
+    ReleaseAssetDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_release_manifest_dto(
+    ReleaseManifestDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_rule_item_dto(RuleItemDto self, SseSerializer serializer);
 
   @protected
@@ -586,9 +642,6 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
     WhitelistGroupDto self,
     SseSerializer serializer,
   );
-
-  @protected
-  void sse_encode_i_32(int self, SseSerializer serializer);
 }
 
 // Section: wire_class

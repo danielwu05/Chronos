@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'app_version.dart';
 import 'package:chronos_app/services/extension_packager.dart';
 
 /// Manages the persistent background `chronos_proxy` daemon (`127.0.0.1:4545` + `4546`)
@@ -11,6 +12,11 @@ class ChronosDaemonService {
 
   static String? findPackagedProxyBinary() {
     final exeDir = File(Platform.resolvedExecutable).parent.path;
+    // Installed releases always ship their matching daemon next to the app binary.
+    if (isRunningFromInstallRoot()) {
+      final bundled = File('$exeDir/chronos_proxy');
+      if (bundled.existsSync() && bundled.lengthSync() > 0) return bundled.path;
+    }
     final root = ExtensionPackager.findProjectRoot();
     final home = Platform.environment['HOME'] ?? '/tmp';
 
