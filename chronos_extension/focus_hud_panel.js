@@ -18,7 +18,7 @@
       cls: "c-grp-yt",
       items: [
         ["ytBlockShorts", "Bloquear Shorts"],
-        ["ytEducationalMode", "Modo Educativo (Ocultar Feed Home)"],
+        ["ytEducationalMode", "Ocultar Feed da Home"],
         ["ytBlockSidebar", "Ocultar Vídeos Relacionados"],
         ["ytBlockComments", "Ocultar Comentários"],
       ],
@@ -43,6 +43,7 @@
       items: [
         ["rdBlockFeed", "Bloquear Feed Principal"],
         ["rdBlockComments", "Ocultar Comentários"],
+        ["rdBlockNsfw", "Bloquear Conteúdo +18"],
       ],
     },
     {
@@ -51,6 +52,7 @@
       items: [
         ["twBlockFeed", "Bloquear Timeline"],
         ["twBlockTrends", "Ocultar Assuntos do Momento"],
+        ["twBlockSensitive", "Bloquear Conteúdo +18"],
       ],
     },
     {
@@ -413,6 +415,9 @@
         ? !!cfg.getAntiCheatActive()
         : !!cfg.antiCheatActive;
     let lastMatchedRule = null;
+    let liveBase = null;
+    let liveTimer = null;
+    const LIVE_MAX_DRIFT_S = 5;
     let lastSites = [];
     let panelOpen = false;
     let activeTab = "tempo";
@@ -469,6 +474,7 @@
       typeof cfg.getPrimaryLanguage === "function" && cfg.getPrimaryLanguage()
         ? cfg.getPrimaryLanguage()
         : "pt-BR";
+    if (globalThis.ChronosI18n) globalThis.ChronosI18n.setLang(primaryLanguage);
     let toastEl = null;
     let listenersBound = false;
     let dragListenersBound = false;
@@ -794,12 +800,12 @@
         rmBtn.className = "c-chip-rm";
         rmBtn.textContent = antiCheatActive ? "\uD83D\uDD12" : "\u00D7";
         rmBtn.title = antiCheatActive
-          ? "Desative o Anti-Cheat para remover"
+          ? "Desative o Anti-Burla para remover"
           : "Remover " + disp;
         rmBtn.addEventListener("click", (ev) => {
           ev.stopPropagation();
           if (antiCheatActive) {
-            showToast("Anti-Cheat ativo: desative para remover tags ou nomes.");
+            showToast("Anti-Burla ativo: desative para remover tags ou nomes.");
             return;
           }
           const key = isTag ? "launcherBlockedTags" : "launcherBlockedNames";
@@ -883,11 +889,13 @@
         return;
       }
 
-      const rem = Math.max(0, Math.floor(rule.remainingSeconds || 0));
+      const serverRem = Math.max(0, Math.floor(rule.remainingSeconds || 0));
+      const live = liveRemaining();
+      const rem = live !== null ? live : serverRem;
       const totalQuota = Math.max(0, Math.floor(rule.dailyQuotaSeconds || 0));
       const consumed =
         rule.consumedSeconds !== undefined
-          ? Math.max(0, Math.floor(rule.consumedSeconds || 0))
+          ? Math.max(0, Math.floor(rule.consumedSeconds || 0) + (serverRem - rem))
           : Math.max(0, totalQuota - rem);
       const isBlocked = !!rule.isBlocked || rem <= 0;
       const isWarn = !isBlocked && rem <= 300;
@@ -1161,7 +1169,7 @@
             }
             syncFilterControls(currentFilters);
             if (res && res.antiCheatLocked) {
-              showToast(res.message || "Anti-Cheat ativo: remo\u00e7\u00e3o bloqueada.");
+              showToast(res.message || "Anti-Burla ativo: remo\u00e7\u00e3o bloqueada.");
               applyBadge("Bloqueado (AC)", "is-err");
             } else {
               applyBadge("Erro ao salvar", "is-err");
@@ -1380,6 +1388,10 @@
     }
 
     function destroy() {
+      if (liveTimer) {
+        clearInterval(liveTimer);
+        liveTimer = null;
+      }
       hideToast();
       unbindGlobalListeners();
       dragState = null;
@@ -1431,6 +1443,12 @@
           return false;
         }
       } else {
+        // Another proxy-injected pill already on this page (e.g. a second runtime): keep one.
+        const otherProxy = document.querySelector('#chronos-focus-hud[data-chronos-proxy="1"]');
+        if (otherProxy && otherProxy !== hudHost) {
+          if (hudHost) destroy();
+          return false;
+        }
         const extEl = document.querySelector('#chronos-focus-hud[data-chronos-extension="1"]');
         if (extEl && extEl !== hudHost && extEl.parentNode) {
           try {
@@ -1454,6 +1472,8 @@
       hudHost.id = "chronos-focus-hud";
       hudHost.setAttribute(source === "proxy" ? "data-chronos-proxy" : "data-chronos-extension", "1");
       hudShadow = hudHost.attachShadow({ mode: "open" });
+      // Pill texts follow the app language (i18n.js translates what is shown).
+      if (globalThis.ChronosI18n) globalThis.ChronosI18n.observe(hudShadow);
 
       attachShadowStyles(hudShadow, cfg.nonce);
 
@@ -1795,7 +1815,7 @@
 
       launcherLockNoteEl = document.createElement("div");
       launcherLockNoteEl.className = "c-ac-lock" + (antiCheatActive ? "" : " is-hidden");
-      launcherLockNoteEl.textContent = "Anti-Cheat ativo: desative para remover tags/nomes ou desligar o filtro.";
+      launcherLockNoteEl.textContent = "Anti-Burla ativo: desative para remover tags/nomes ou desligar o filtro.";
       filtersCard.appendChild(launcherLockNoteEl);
 
       const lnRow = document.createElement("label");
@@ -1810,7 +1830,7 @@
       launcherEnabledChkEl.addEventListener("change", () => {
         if (!launcherEnabledChkEl.checked && antiCheatActive) {
           launcherEnabledChkEl.checked = true;
-          showToast("Anti-Cheat ativo: desative para desligar o filtro de launchers.");
+          showToast("Anti-Burla ativo: desative para desligar o filtro de launchers.");
           return;
         }
         saveFilters(
@@ -2040,21 +2060,81 @@
       return true;
     }
 
-    function updateRule(rule) {
-      lastMatchedRule = rule || null;
-      if (!ensureMounted()) return;
-      if (!pillDot || !pillLabel) return;
+    // Local 1 s countdown between server updates (which arrive every ~1.5 s), so the
+    // pill moves smoothly; it only runs while the server says time is being counted.
 
+    function liveElapsed() {
+      if (!liveBase || !liveBase.counting) return 0;
+      return Math.min(LIVE_MAX_DRIFT_S, Math.floor((Date.now() - liveBase.at) / 1000));
+    }
+
+    function liveRemaining() {
+      if (!liveBase) return null;
+      return Math.max(0, liveBase.remaining - liveElapsed());
+    }
+
+    function syncLiveBase(rule) {
+      if (!rule || rule.remainingSeconds === undefined) {
+        liveBase = null;
+        return;
+      }
+      const key = rule.entityId || rule.displayName || "";
+      const server = Math.max(0, Math.floor(rule.remainingSeconds || 0));
+      const counting = !!rule.counting && !rule.isBlocked;
+      const prevLive = liveBase && liveBase.key === key && liveBase.counting && counting ? liveRemaining() : null;
+      if (prevLive !== null && server > prevLive && server - prevLive <= 2) {
+        // Stale server value (cache a bit behind): keep ticking instead of jumping back.
+        return;
+      }
+      liveBase = { key, remaining: server, at: Date.now(), counting };
+    }
+
+    function ensureLiveTimer() {
+      const needed = !!(liveBase && liveBase.counting);
+      if (!needed) {
+        if (liveTimer) {
+          clearInterval(liveTimer);
+          liveTimer = null;
+        }
+        return;
+      }
+      if (liveTimer) return;
+      liveTimer = setInterval(() => {
+        if (!liveBase || !liveBase.counting) return;
+        if (typeof document !== "undefined" && document.hidden) return;
+        renderPillLabel(lastMatchedRule);
+        if (panelOpen) renderHeroMonitor();
+      }, 1000);
+      if (liveTimer && typeof liveTimer.unref === "function") liveTimer.unref();
+    }
+
+    function renderPillLabel(rule) {
+      if (!pillDot || !pillLabel) return;
       if (!rule || rule.remainingSeconds === undefined) {
         pillDot.className = "c-dot is-neutral";
         if (eyeDotEl) eyeDotEl.className = "c-eye-dot is-neutral";
         pillLabel.textContent = "Chronos";
+        return;
+      }
+      const live = liveRemaining();
+      const rem = live !== null ? live : rule.remainingSeconds || 0;
+      const dotState = rem <= 300 ? "is-danger" : rem <= 900 ? "is-warn" : "is-ok";
+      pillDot.className = "c-dot " + dotState;
+      if (eyeDotEl) eyeDotEl.className = "c-eye-dot " + dotState;
+      pillLabel.textContent = (rule.displayName || "Chronos") + ": " + formatTime(rem);
+    }
+
+    function updateRule(rule) {
+      lastMatchedRule = rule || null;
+      syncLiveBase(lastMatchedRule);
+      ensureLiveTimer();
+      if (!ensureMounted()) return;
+      if (!pillDot || !pillLabel) return;
+
+      if (!rule || rule.remainingSeconds === undefined) {
+        renderPillLabel(null);
       } else {
-        const rem = rule.remainingSeconds || 0;
-        const dotState = rem <= 300 ? "is-danger" : rem <= 900 ? "is-warn" : "is-ok";
-        pillDot.className = "c-dot " + dotState;
-        if (eyeDotEl) eyeDotEl.className = "c-eye-dot " + dotState;
-        pillLabel.textContent = (rule.displayName || "Chronos") + ": " + formatTime(rem);
+        renderPillLabel(rule);
       }
 
       if (panelOpen) {
@@ -2068,6 +2148,7 @@
       }
       if (typeof nextLang === "string" && nextLang) {
         primaryLanguage = nextLang;
+        if (globalThis.ChronosI18n) globalThis.ChronosI18n.setLang(nextLang);
       }
       let acChanged = false;
       if (typeof nextAntiCheatActive === "boolean") {

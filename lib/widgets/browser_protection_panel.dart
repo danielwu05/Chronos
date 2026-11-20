@@ -1,3 +1,4 @@
+import 'package:chronos_app/services/app_locale.dart';
 import 'package:chronos_app/services/browser_extension_installer.dart';
 import 'package:chronos_app/services/chronos_guard_service.dart';
 import 'package:flutter/material.dart';
@@ -37,21 +38,21 @@ class BrowserSetupFlowStepper extends StatelessWidget {
         children: [
           _buildStepChip(
             step: '1',
-            label: 'Pacote Embutido',
+            label: tr.pacoteEmbutido,
             done: hasPackages,
             warning: false,
           ),
           const Icon(Icons.arrow_forward, size: 14, color: Colors.white38),
           _buildStepChip(
             step: '2',
-            label: guardOutdated ? 'Atualizar Guard' : 'Política Guard',
+            label: guardOutdated ? tr.atualizarGuard : tr.politicaGuard,
             done: guardActive,
             warning: guardOutdated || (guardStatus?.isInstalled == false),
           ),
           const Icon(Icons.arrow_forward, size: 14, color: Colors.white38),
           _buildStepChip(
             step: '3',
-            label: 'Ativo nos Navegadores',
+            label: tr.ativoNosNavegadores,
             done: allBrowsersReady,
             warning: browsers.isNotEmpty && !allBrowsersReady,
           ),
@@ -111,8 +112,8 @@ class BrowserStatusChipsWrap extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (browsers.isEmpty) {
-      return const Text(
-        'Nenhum navegador suportado detectado.',
+      return Text(
+        tr.nenhumNavegadorSuportadoDetectado,
         style: TextStyle(color: Colors.white54, fontSize: 12),
       );
     }
@@ -168,7 +169,7 @@ class BrowserStatusChipsWrap extends StatelessWidget {
         );
         final tooltipMsg = st.pendingMessage ??
             (isFirefox && st.installed
-                ? 'Protegido pelo Proxy Seletivo Local (127.0.0.1:4546) + Certificado CA — o Firefox Release não lista .xpi sem assinatura Mozilla em about:addons, mas bloqueios e filtros HTML/CSS operam normalmente.'
+                ? tr.protegidoPeloProxySeletivoLocal127
                 : null);
         return tooltipMsg != null ? Tooltip(message: tooltipMsg, child: chip) : chip;
       }).toList(),
@@ -208,8 +209,8 @@ class ManualBrowserFallbackTile extends StatelessWidget {
         childrenPadding: const EdgeInsets.only(top: 6, bottom: 4),
         iconColor: Colors.white54,
         collapsedIconColor: Colors.white54,
-        title: const Text(
-          'Instalação Manual / Fallback Avançado',
+        title: Text(
+          tr.instalacaoManualFallbackAvancado,
           style: TextStyle(fontSize: 12, color: Colors.white70, fontWeight: FontWeight.w600),
         ),
         children: [
@@ -222,11 +223,11 @@ class ManualBrowserFallbackTile extends StatelessWidget {
                 OutlinedButton.icon(
                   style: OutlinedButton.styleFrom(foregroundColor: Colors.white70),
                   icon: const Icon(Icons.download, size: 15),
-                  label: const Text('Baixar Chrome (.zip)', style: TextStyle(fontSize: 12)),
+                  label: Text(tr.baixarChromeZip, style: TextStyle(fontSize: 12)),
                   onPressed: () async {
                     final zip = await BrowserExtensionInstaller.exportExtensionZipToDownloads();
                     onFeedback(
-                      zip != null ? 'Extensão salva em: $zip' : 'Erro ao salvar zip em Downloads.',
+                      zip != null ? tr.extensaoSalvaEmP0(zip) : tr.erroAoSalvarZipEmDownloads,
                       zip != null,
                     );
                   },
@@ -234,12 +235,12 @@ class ManualBrowserFallbackTile extends StatelessWidget {
                 OutlinedButton.icon(
                   style: OutlinedButton.styleFrom(foregroundColor: Colors.white70),
                   icon: const Icon(Icons.download, size: 15),
-                  label: const Text('Baixar Firefox (.xpi)', style: TextStyle(fontSize: 12)),
+                  label: Text(tr.baixarFirefoxXpi, style: TextStyle(fontSize: 12)),
                   onPressed: () async {
                     final xpi =
                         await BrowserExtensionInstaller.exportFirefoxExtensionZipToDownloads();
                     onFeedback(
-                      xpi != null ? 'Extensão salva em: $xpi' : 'Erro ao salvar xpi em Downloads.',
+                      xpi != null ? tr.extensaoSalvaEmP0(xpi) : tr.erroAoSalvarXpiEmDownloads,
                       xpi != null,
                     );
                   },
@@ -251,7 +252,7 @@ class ManualBrowserFallbackTile extends StatelessWidget {
                       side: const BorderSide(color: Colors.tealAccent),
                     ),
                     icon: const Icon(Icons.open_in_browser, size: 15),
-                    label: const Text('Ativar no Chrome (Manual)', style: TextStyle(fontSize: 12)),
+                    label: Text(tr.ativarNoChromeManual, style: TextStyle(fontSize: 12)),
                     onPressed: onShowChromeGuide,
                   ),
                 if (hasFirefox && onShowFirefoxGuide != null)
@@ -261,14 +262,14 @@ class ManualBrowserFallbackTile extends StatelessWidget {
                       side: const BorderSide(color: Colors.orangeAccent),
                     ),
                     icon: const Icon(Icons.open_in_browser, size: 15),
-                    label: const Text('Ativar no Firefox (Manual)', style: TextStyle(fontSize: 12)),
+                    label: Text(tr.ativarNoFirefoxManual, style: TextStyle(fontSize: 12)),
                     onPressed: onShowFirefoxGuide,
                   ),
                 if (onShowGuardTerminal != null)
                   OutlinedButton.icon(
                     style: OutlinedButton.styleFrom(foregroundColor: Colors.white70),
                     icon: const Icon(Icons.terminal, size: 15),
-                    label: const Text('Comando Terminal (Guard)', style: TextStyle(fontSize: 12)),
+                    label: Text(tr.comandoTerminalGuard, style: TextStyle(fontSize: 12)),
                     onPressed: onShowGuardTerminal,
                   ),
               ],
@@ -296,13 +297,13 @@ Future<void> showConfirmRelaunchBrowsersDialog(
     builder: (ctx) => AlertDialog(
       backgroundColor: const Color(0xFF161922),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      title: const Row(
+      title: Row(
         children: [
           Icon(Icons.restart_alt, color: Colors.orangeAccent),
           SizedBox(width: 8),
           Expanded(
             child: Text(
-              'Reiniciar Navegadores para Ativar?',
+              tr.reiniciarNavegadoresParaAtivar,
               style: TextStyle(fontSize: 16, color: Colors.white),
             ),
           ),
@@ -311,21 +312,19 @@ Future<void> showConfirmRelaunchBrowsersDialog(
       content: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 460),
         child: Text(
-          'Os seguintes navegadores já estão abertos e precisam ser fechados e reabertos para carregar a extensão Chronos:\n\n'
-          '$names\n\n'
-          'Deseja fechar e reabrir esses navegadores agora?',
+          tr.osSeguintesNavegadoresJaEstaoAbertos(names),
           style: const TextStyle(fontSize: 13, color: Colors.white70, height: 1.45),
         ),
       ),
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(ctx, false),
-          child: const Text('Agora Não'),
+          child: Text(tr.agoraNao),
         ),
         FilledButton.icon(
           style: FilledButton.styleFrom(backgroundColor: Colors.teal.shade700),
           icon: const Icon(Icons.restart_alt, size: 16),
-          label: const Text('Fechar e Reabrir Agora'),
+          label: Text(tr.fecharEReabrirAgora),
           onPressed: () => Navigator.pop(ctx, true),
         ),
       ],
@@ -339,7 +338,7 @@ Future<void> showConfirmRelaunchBrowsersDialog(
     await Future.delayed(const Duration(milliseconds: 900));
     await onCompleted?.call();
     onFeedback?.call(
-      'Navegadores reiniciados (${pendingBrowsers.map((b) => b.name).join(', ')})!',
+      tr.navegadoresReiniciadosP0(pendingBrowsers.map((b) => b.name).join(', ')),
       true,
     );
   }

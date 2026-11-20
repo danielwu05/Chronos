@@ -1,3 +1,4 @@
+import 'package:chronos_app/services/app_locale.dart';
 import 'dart:io';
 
 class NotificationService {
@@ -20,6 +21,26 @@ class NotificationService {
   // sessionKey:appName -> rastreador de notificação de abertura do app
   final Set<String> _monitoredNotifiedApps = {};
 
+  /// Whether the desktop's "Do not disturb" mode is on (notifications are then hidden).
+  /// Checks Omarchy, mako, dunst, SwayNC and GNOME; false when none answers.
+  static Future<bool> isDoNotDisturbOn() async {
+    Future<String> out(String exe, List<String> args) async {
+      try {
+        final r = await Process.run(exe, args).timeout(const Duration(seconds: 2));
+        return r.exitCode == 0 ? r.stdout.toString().trim().toLowerCase() : '';
+      } catch (_) {
+        return '';
+      }
+    }
+
+    if (await out('omarchy-shell', ['notifications', 'isDnd']) == 'on') return true;
+    if ((await out('makoctl', ['mode'])).contains('do-not-disturb')) return true;
+    if (await out('dunstctl', ['is-paused']) == 'true') return true;
+    if (await out('swaync-client', ['-D']) == 'true') return true;
+    if (await out('gsettings', ['get', 'org.gnome.desktop.notifications', 'show-banners']) == 'false') return true;
+    return false;
+  }
+
   /// Sends a desktop notification using notify-send on Linux.
   Future<void> sendNotification({
     required String title,
@@ -35,7 +56,7 @@ class NotificationService {
         '-t',
         expireTimeMs.toString(),
         '-a',
-        'Chronos Focus',
+        tr.chronosFocus,
         title,
         body,
       ]);
@@ -52,8 +73,8 @@ class NotificationService {
     _monitoredNotifiedApps.add(key);
 
     sendNotification(
-      title: 'Chronos - Monitoramento Ativo',
-      body: 'O aplicativo "$appName" está sendo monitorado na sessão "$sessionName".',
+      title: tr.chronosMonitoramentoAtivo,
+      body: tr.oAplicativoP0EstaSendoMonitorado(appName, sessionName),
       urgency: 'low',
     );
   }
@@ -70,7 +91,7 @@ class NotificationService {
         'default';
     final name = sessionData['display_name']?.toString() ??
         sessionData['name']?.toString() ??
-        'Sessão';
+        tr.sessao;
     final remainingSec = (sessionData['remaining_seconds'] as num?)?.toInt() ??
         (sessionData['remainingSec'] as num?)?.toInt() ??
         0;
@@ -127,8 +148,8 @@ class NotificationService {
           sentKeys.add(key);
           final urgency = threshold <= 1 ? 'critical' : 'normal';
           sendNotification(
-            title: 'Chronos - Tempo de Tela Restante',
-            body: '$name: Restam apenas $threshold minuto${threshold > 1 ? 's' : ''} de tempo de tela!',
+            title: tr.chronosTempoDeTelaRestante,
+            body: tr.p0RestamApenasP1MinutoP2(name, threshold),
             urgency: urgency,
           );
         }
@@ -137,8 +158,8 @@ class NotificationService {
       if (remainingSec <= 0 && limitSec > 0 && !sentKeys.contains('depleted')) {
         sentKeys.add('depleted');
         sendNotification(
-          title: 'Chronos - Tempo de Tela Esgotado',
-          body: '$name: O tempo de tela diário foi completamente esgotado!',
+          title: tr.chronosTempoDeTelaEsgotado,
+          body: tr.p0OTempoDeTelaDiario(name),
           urgency: 'critical',
         );
       }
@@ -158,8 +179,8 @@ class NotificationService {
             final elapsedMins = currentBucket * periodicIntervalMins;
             final remMins = (remainingSec / 60).ceil();
             sendNotification(
-              title: 'Chronos - Alerta Periódico ($periodicIntervalMins min)',
-              body: '$name: $elapsedMins min utilizados hoje • Restam $remMins min de tempo de tela.',
+              title: tr.chronosAlertaPeriodicoP0Min(periodicIntervalMins),
+              body: tr.p0P1MinUtilizadosHojeRestam(name, elapsedMins, remMins),
               urgency: 'normal',
             );
           }
@@ -168,8 +189,8 @@ class NotificationService {
           final elapsedMins = currentBucket * periodicIntervalMins;
           final remMins = (remainingSec / 60).ceil();
           sendNotification(
-            title: 'Chronos - Alerta Periódico ($periodicIntervalMins min)',
-            body: '$name: $elapsedMins min utilizados hoje • Restam $remMins min de tempo de tela.',
+            title: tr.chronosAlertaPeriodicoP0Min(periodicIntervalMins),
+            body: tr.p0P1MinUtilizadosHojeRestam(name, elapsedMins, remMins),
             urgency: 'normal',
           );
         }

@@ -1,14 +1,19 @@
 // ignore_for_file: deprecated_member_use
+import 'package:chronos_app/services/app_locale.dart';
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/material.dart';
+import 'widgets/screen_block_overlay.dart';
+import 'services/chronos_guard_service.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart' show ExternalLibrary;
 import 'package:path_provider/path_provider.dart';
 import 'package:window_manager/legacy.dart';
 import 'package:chronos_app/screens/onboarding_screen.dart';
 import 'package:chronos_app/services/browser_extension_installer.dart';
 import 'package:chronos_app/services/chronos_daemon_service.dart';
+import 'package:chronos_app/services/app_lifecycle_service.dart';
+import 'package:chronos_app/services/app_profile.dart';
 import 'package:chronos_app/services/notification_service.dart';
 import 'package:chronos_app/services/web_block_server.dart';
 import 'package:chronos_app/src/rust/api/simple.dart';
@@ -21,6 +26,7 @@ import 'package:chronos_app/widgets/quarantine_view.dart';
 import 'package:chronos_app/widgets/rules_view.dart';
 import 'package:chronos_app/widgets/general_settings_view.dart';
 import 'package:chronos_app/widgets/update_dialog.dart';
+import 'package:chronos_app/widgets/uninstall_dialog.dart';
 
 final ValueNotifier<ThemeMode> themeModeNotifier = ValueNotifier<ThemeMode>(ThemeMode.dark);
 
@@ -44,27 +50,55 @@ ExternalLibrary? _resolveBundledRustLibrary() {
   return path == null ? null : ExternalLibrary.open(path);
 }
 
-void main() async {
+/// App language from the database. Before the setup is finished the system language is
+/// only shown (never saved here: a failed onboarding query must not overwrite the user's
+/// choice); it is saved when picked in the setup/settings or when the setup is finished.
+Future<void> _loadAppLanguage() async {
+  try {
+    final onboarding = await getOnboardingState();
+    if (!onboarding.isOnboarded) {
+      setAppLanguageCode(systemLanguageCode());
+      return;
+    }
+    setAppLanguageCode(await getPrimaryLanguage());
+  } catch (_) {}
+}
+
+/// Path of the Chronos database (set at startup; used by the uninstaller).
+String chronosDbPath = '';
+
+void main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
   await windowManager.ensureInitialized();
   await RustLib.init(externalLibrary: _resolveBundledRustLibrary());
+  setChronosProfile(dev: ChronosProfile.isDev);
 
-  const windowOptions = WindowOptions(
+  final windowOptions = WindowOptions(
     size: Size(1100, 760),
     minimumSize: Size(260, 220),
     center: true,
-    title: 'Chronos - Anti-Cheat & Strict Focus Engine',
+    title: tr.chronosAntiCheatStrictFocusEngine,
   );
 
+  // Autostart / relaunch after being killed: start hidden in the background.
+  final startHidden = AppLifecycleService.isBackgroundLaunch(args);
   windowManager.waitUntilReadyToShow(windowOptions, () async {
-    await windowManager.show();
-    await windowManager.focus();
+    if (startHidden) {
+      await windowManager.hide();
+    } else {
+      await windowManager.show();
+      await windowManager.focus();
+    }
   });
+  await AppLifecycleService.instance.start();
 
   final dir = await getApplicationDocumentsDirectory();
-  await ChronosDaemonService.ensureBackgroundDaemonRunning(dbPath: '${dir.path}/chronos.db');
+  chronosDbPath = '${dir.path}/${ChronosProfile.dbFileName}';
+  await ChronosDaemonService.ensureBackgroundDaemonRunning(dbPath: chronosDbPath);
   final dbOk = await setupDatabase(appDataDir: dir.path);
-  await WebBlockServer.start();
+  await _loadAppLanguage();
+  await WebBlockServer.start(port: ChronosProfile.apiPort);
+  if (!ChronosProfile.isDev) BrowserExtensionInstaller.ensureExtensionUpdateFrequencyFlags();
   if (!BrowserExtensionInstaller.hasUserRemovedExtensionFlag()) {
     unawaited(BrowserExtensionInstaller.installAll());
   }
@@ -140,19 +174,26 @@ class _ChronosAppState extends State<ChronosApp> {
 
   @override
   Widget build(BuildContext context) {
-    return ValueListenableBuilder<ThemeMode>(
+    return ValueListenableBuilder<Locale>(
+      valueListenable: appLocale,
+      builder: (context, locale, _) => ValueListenableBuilder<ThemeMode>(
       valueListenable: themeModeNotifier,
       builder: (context, themeMode, _) {
         return MaterialApp(
-          title: 'Chronos Focus Engine',
+          // A new key on language change rebuilds every screen with the new texts.
+          key: ValueKey(locale.toLanguageTag()),
+          title: tr.chronosFocusEngine,
           debugShowCheckedModeBanner: false,
+          locale: locale,
+          supportedLocales: AppLocalizations.supportedLocales,
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
           builder: (context, child) {
             final mediaQuery = MediaQuery.of(context);
             return MediaQuery(
               data: mediaQuery.copyWith(
                 textScaler: mediaQuery.textScaler.clamp(minScaleFactor: 0.9, maxScaleFactor: 1.15),
               ),
-              child: child!,
+              child: ScreenBlockGuard(child: child!),
             );
           },
           themeMode: themeMode,
@@ -207,6 +248,7 @@ class _ChronosAppState extends State<ChronosApp> {
                     )),
         );
       },
+    ),
     );
   }
 }
@@ -229,6 +271,10 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   int _currentTabIndex = 0;
+
+  /// Quarantine (approve / block programs from temp and download folders) is a
+  /// parental tool: hidden in self-control mode.
+  bool get _showQuarantine => widget.onboardingState?.appMode == 'PARENTAL';
   String _activeEntityId = 'auto'; // 100% Automático via engine::tick_auto()
   StreamSubscription<LiveEngineTick>? _trackingSubscription;
   final ValueNotifier<LiveEngineTick?> _tickNotifier = ValueNotifier<LiveEngineTick?>(null);
@@ -253,6 +299,8 @@ class _HomeScreenState extends State<HomeScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) unawaited(checkAndPromptForUpdate(context));
     });
+    // "Desinstalar Chronos…" from the tray menu.
+    AppLifecycleService.instance.uninstallRequests.addListener(_onUninstallRequested);
 
     _nukeTicker = Timer.periodic(const Duration(seconds: 1), (_) {
       if (_antiCheatState != null && _antiCheatState!.mode == 'NUKE' && _antiCheatState!.nukeRemainingSeconds > 0) {
@@ -278,11 +326,16 @@ class _HomeScreenState extends State<HomeScreen> {
           hasActiveSiteRules: hasActiveRules,
           isAntiCheatActive: ac.isActive,
         );
+        await ChronosGuardService.syncNewSignedFirefoxXpi();
       } catch (_) {}
     });
   }
 
   String _stateTextOrEmpty(String text) => text;
+
+  void _onUninstallRequested() {
+    if (mounted) showUninstallDialog(context);
+  }
 
   Future<void> _initHomeAndExtensions() async {
     await _refreshAntiCheat();
@@ -305,6 +358,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
+    AppLifecycleService.instance.uninstallRequests.removeListener(_onUninstallRequested);
     _trackingSubscription?.cancel();
     _trackingSubscription = null;
     _tickNotifier.dispose();
@@ -450,23 +504,22 @@ class _HomeScreenState extends State<HomeScreen> {
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Row(
+        title: Row(
           children: [
             Icon(Icons.warning_amber_rounded, color: Colors.redAccent),
             SizedBox(width: 8),
-            Text('Reiniciar Banco de Dados?'),
+            Text(tr.reiniciarBancoDeDados),
           ],
         ),
-        content: const Text(
-          'Deseja resetar completamente o SQLite? Intervalos serão limpos, '
-          'a catraca será destravada e a configuração inicial será reiniciada.',
+        content: Text(
+          tr.desejaResetarCompletamenteOSqliteIntervalos,
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar')),
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(tr.cancelar)),
           FilledButton(
             style: FilledButton.styleFrom(backgroundColor: Colors.red.shade800),
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Reiniciar Tudo'),
+            child: Text(tr.reiniciarTudo),
           ),
         ],
       ),
@@ -519,7 +572,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             const SizedBox(width: 6),
             Text(
-              isParent ? 'Parental (Pai)' : 'Parental (Filho)',
+              isParent ? tr.parentalPai : tr.parentalFilho,
               style: const TextStyle(
                 fontSize: 11,
                 color: Colors.purpleAccent,
@@ -537,13 +590,13 @@ class _HomeScreenState extends State<HomeScreen> {
           borderRadius: BorderRadius.circular(20),
           border: Border.all(color: Colors.tealAccent, width: 0.8),
         ),
-        child: const Row(
+        child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(Icons.psychology, size: 14, color: Colors.tealAccent),
             SizedBox(width: 6),
             Text(
-              'Auto-Controle',
+              tr.autoControle,
               style: TextStyle(
                 fontSize: 11,
                 color: Colors.tealAccent,
@@ -581,8 +634,8 @@ class _HomeScreenState extends State<HomeScreen> {
           const SizedBox(width: 4),
           Text(
             tick != null
-                ? (hasActiveDistraction ? 'Foco: ${tick.displayName}' : 'Auto-Detecção Ativa')
-                : 'Detecção Automática',
+                ? (hasActiveDistraction ? tr.focoP0(tick.displayName) : tr.autoDeteccaoAtiva)
+                : tr.deteccaoAutomatica,
             style: TextStyle(
               fontSize: 11,
               color: hasActiveDistraction ? Colors.tealAccent : Colors.white70,
@@ -603,7 +656,7 @@ class _HomeScreenState extends State<HomeScreen> {
     Color border = Colors.white24;
     Color textColor = Colors.white70;
     IconData icon = Icons.shield_outlined;
-    String label = 'Anti-Cheat: OFF';
+    String label = tr.antiCheatOff;
 
     if (isActive) {
       if (isNuke) {
@@ -617,14 +670,14 @@ class _HomeScreenState extends State<HomeScreen> {
         final m = (remSec % 3600) ~/ 60;
         final s = remSec % 60;
         label = d > 0
-            ? 'Nuke: ${d}d ${h.toString().padLeft(2, '0')}:${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}'
-            : 'Nuke: ${h.toString().padLeft(2, '0')}:${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}';
+            ? tr.nukeP0DP1(d, '${h.toString().padLeft(2, '0')}:${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}')
+            : tr.nukeP0('${h.toString().padLeft(2, '0')}:${m.toString().padLeft(2, '0')}:${s.toString().padLeft(2, '0')}');
       } else {
         bg = Colors.amber.shade900.withValues(alpha: 0.35);
         border = Colors.amberAccent;
         textColor = Colors.amberAccent;
         icon = Icons.lock;
-        label = 'Anti-Cheat Ativo';
+        label = tr.antiCheatAtivo;
       }
     }
 
@@ -702,55 +755,46 @@ class _HomeScreenState extends State<HomeScreen> {
   List<PopupMenuEntry<String>> _buildMenuItems({bool isHalfScreen = false}) {
     return [
       if (isHalfScreen) ...[
-        const PopupMenuItem(
+        PopupMenuItem(
           value: 'reset_onboarding',
           child: Row(
             children: [
               Icon(Icons.restart_alt, color: Colors.tealAccent, size: 20),
               SizedBox(width: 8),
-              Text('Refazer Cadastro / Trocar Modo'),
-            ],
-          ),
-        ),
-        const PopupMenuItem(
-          value: 'install_extensions',
-          child: Row(
-            children: [
-              Icon(Icons.extension, color: Colors.blueAccent, size: 20),
-              SizedBox(width: 8),
-              Text('Instalar Extensões nos Navegadores'),
+              Text(tr.refazerCadastroTrocarModo),
             ],
           ),
         ),
       ],
-      const PopupMenuItem(
+      if (ChronosProfile.isDev) ...[
+      PopupMenuItem(
         value: 'debug_disable_anticheat',
         child: Row(
           children: [
             Icon(Icons.bug_report, color: Colors.purpleAccent, size: 20),
             SizedBox(width: 8),
-            Text('🛠️ Sair do Anti-Cheat (Debug)'),
+            Text(tr.sairDoAntiCheatDebug),
           ],
         ),
       ),
       const PopupMenuDivider(),
-      const PopupMenuItem(
+      PopupMenuItem(
         value: 'reset_full',
         child: Row(
           children: [
             Icon(Icons.restore, color: Colors.redAccent, size: 20),
             SizedBox(width: 8),
-            Text('Reiniciar Banco Completo'),
+            Text(tr.reiniciarBancoCompleto),
           ],
         ),
       ),
-      const PopupMenuItem(
+      PopupMenuItem(
         value: 'reset_daily',
         child: Row(
           children: [
             Icon(Icons.history_toggle_off, color: Colors.blueAccent, size: 20),
             SizedBox(width: 8),
-            Text('Zerar Consumo Diário'),
+            Text(tr.zerarConsumoDiario),
           ],
         ),
       ),
@@ -760,20 +804,21 @@ class _HomeScreenState extends State<HomeScreen> {
           children: [
             const Icon(Icons.lock_open, color: Colors.amberAccent, size: 20),
             const SizedBox(width: 8),
-            Text('Destravar Catraca ($_activeEntityId)'),
+            Text(tr.destravarCatracaP0(_activeEntityId)),
           ],
         ),
       ),
-      const PopupMenuItem(
+      PopupMenuItem(
         value: 'refill_tokens',
         child: Row(
           children: [
             Icon(Icons.token, color: Colors.purpleAccent, size: 20),
             SizedBox(width: 8),
-            Text('Restaurar Tokens (+2)'),
+            Text(tr.restaurarTokens2),
           ],
         ),
       ),
+      ],
     ];
   }
 
@@ -791,12 +836,12 @@ class _HomeScreenState extends State<HomeScreen> {
     final borderColor = isDark ? const Color(0xFF232730) : const Color(0xFFE2E8F0);
 
     final navItems = [
-      (Icons.dashboard_outlined, Icons.dashboard, 'Tempo de Tela', 'Monitor em tempo real'),
-      (Icons.bar_chart_outlined, Icons.bar_chart, 'Estatísticas', 'Métricas de consumo'),
-      (Icons.rule_folder_outlined, Icons.rule_folder, 'Regras & Whitelist', 'Limites e grupos'),
-      (Icons.settings_outlined, Icons.settings, 'Configurações', 'Aparência e alertas'),
-      (Icons.security_outlined, Icons.security, 'Quarentena', 'Modo nuke & bloqueios'),
-      (Icons.storage_outlined, Icons.storage, 'SQLite / Testes', 'Depuração do banco'),
+      (Icons.dashboard_outlined, Icons.dashboard, tr.tempoDeTela, tr.monitorEmTempoReal),
+      (Icons.bar_chart_outlined, Icons.bar_chart, tr.estatisticas, tr.metricasDeConsumo),
+      (Icons.rule_folder_outlined, Icons.rule_folder, tr.regrasWhitelist, tr.limitesEGrupos),
+      (Icons.settings_outlined, Icons.settings, tr.configuracoes, tr.aparenciaEAlertas),
+      if (_showQuarantine) (Icons.security_outlined, Icons.security, tr.quarentena, tr.modoNukeBloqueios),
+      if (ChronosProfile.isDev) (Icons.storage_outlined, Icons.storage, tr.sqliteTestes, tr.depuracaoDoBanco),
     ];
 
     return Container(
@@ -826,16 +871,16 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
                 if (!isCompactSidebar) ...[
                   const SizedBox(width: 12),
-                  const Expanded(
+                  Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'Chronos',
+                          tr.chronos,
                           style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, letterSpacing: 0.5),
                         ),
                         Text(
-                          'Focus Engine',
+                          tr.focusEngine,
                           style: TextStyle(fontSize: 11, color: Colors.tealAccent, fontWeight: FontWeight.w600),
                         ),
                       ],
@@ -928,7 +973,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
 
-          // Sidebar Footer: Quick Theme Toggle & Anti-Cheat
+          // Sidebar Footer: Quick Theme Toggle & Anti-Burla
           Divider(height: 1, color: borderColor),
           Padding(
             padding: const EdgeInsets.all(12),
@@ -937,7 +982,7 @@ class _HomeScreenState extends State<HomeScreen> {
               children: [
                 // Quick Theme Toggle
                 Tooltip(
-                  message: isDark ? 'Alternar para Modo Claro' : 'Alternar para Modo Escuro',
+                  message: isDark ? tr.alternarParaModoClaro : tr.alternarParaModoEscuro,
                   child: OutlinedButton.icon(
                     style: OutlinedButton.styleFrom(
                       padding: EdgeInsets.symmetric(horizontal: isCompactSidebar ? 0 : 10, vertical: 8),
@@ -951,7 +996,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     label: isCompactSidebar
                         ? const SizedBox.shrink()
                         : Text(
-                            isDark ? 'Modo Claro' : 'Modo Escuro',
+                            isDark ? tr.modoClaro : tr.modoEscuro,
                             style: TextStyle(
                               fontSize: 12,
                               color: isDark ? Colors.white70 : const Color(0xFF334155),
@@ -961,7 +1006,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                 ),
                 const SizedBox(height: 8),
-                // Anti-Cheat Button
+                // Anti-Burla Button
                 _buildAntiCheatButton(isCompact: isCompactSidebar),
               ],
             ),
@@ -972,13 +1017,13 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Widget _buildDesktopHeader(BuildContext context) {
-    const titles = [
+    final titles = [
       'Tempo de Tela & Foco ao Vivo',
-      'Estatísticas de Consumo & Histórico',
-      'Regras de Bloqueio & Whitelist',
-      'Configurações Gerais & Notificações',
-      'Quarentena & Modo Nuke',
-      'Banco de Dados & Testes SQLite',
+      tr.estatisticasDeConsumoHistorico,
+      tr.regrasDeBloqueioWhitelist,
+      tr.configuracoesGeraisNotificacoes,
+      if (_showQuarantine) tr.quarentenaModoNuke,
+      if (ChronosProfile.isDev) tr.bancoDeDadosTestesSqlite,
     ];
 
     final isDark = Theme.of(context).brightness == Brightness.dark;
@@ -1008,9 +1053,9 @@ class _HomeScreenState extends State<HomeScreen> {
           const Spacer(),
 
           // Ações do cabeçalho
-          if (_antiCheatState?.isActive == true) ...[
+          if (ChronosProfile.isDev && _antiCheatState?.isActive == true) ...[
             IconButton(
-              tooltip: '🛠️ [DEBUG] Sair do Anti-Cheat',
+              tooltip: tr.debugSairDoAntiCheat,
               icon: const Icon(Icons.bug_report, color: Colors.purpleAccent, size: 20),
               onPressed: () async {
                 final res = await debugDisableAntiCheat();
@@ -1022,20 +1067,10 @@ class _HomeScreenState extends State<HomeScreen> {
             const SizedBox(width: 4),
           ],
 
-          IconButton(
-            tooltip: 'Instalar Extensões em Navegadores',
-            icon: const Icon(Icons.extension, color: Colors.blueAccent, size: 20),
-            onPressed: () async {
-              final res = await BrowserExtensionInstaller.installAll(
-                isAntiCheatActive: _antiCheatState?.isActive ?? false,
-                forceMandatory: true,
-              );
-              _showSnack(res.message, res.success);
-            },
-          ),
-
+          // Global actions menu: dev only (debug tools); "redo setup" is in Settings.
+          if (ChronosProfile.isDev)
           PopupMenuButton<String>(
-            tooltip: 'Ações Globais',
+            tooltip: tr.acoesGlobais,
             icon: Icon(Icons.more_vert, color: isDark ? Colors.white70 : const Color(0xFF475569)),
             onSelected: _handleMenuAction,
             itemBuilder: (context) => _buildMenuItems(),
@@ -1058,9 +1093,9 @@ class _HomeScreenState extends State<HomeScreen> {
             child: const Icon(Icons.hourglass_bottom, color: Colors.tealAccent, size: 20),
           ),
           const SizedBox(width: 10),
-          const Flexible(
+          Flexible(
             child: Text(
-              'Chronos',
+              tr.chronos,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18),
             ),
@@ -1082,7 +1117,7 @@ class _HomeScreenState extends State<HomeScreen> {
         if (!isHalfScreen) ...[
           if (isCompact)
             IconButton(
-              tooltip: 'Tela de Cadastro',
+              tooltip: tr.telaDeCadastro,
               icon: const Icon(Icons.settings_backup_restore, color: Colors.tealAccent, size: 18),
               onPressed: widget.onResetOnboarding,
             )
@@ -1094,21 +1129,21 @@ class _HomeScreenState extends State<HomeScreen> {
                 foregroundColor: Colors.tealAccent,
               ),
               icon: const Icon(Icons.settings_backup_restore, size: 16),
-              label: const Text('Tela de Cadastro', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+              label: Text(tr.telaDeCadastro, style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
               onPressed: widget.onResetOnboarding,
             ),
             const SizedBox(width: 8),
           ],
         ],
 
-        // Botão Anti-Cheat
+        // Botão Anti-Burla
         _buildAntiCheatButton(isCompact: isHalfScreen || isCompact),
         const SizedBox(width: 4),
 
         // Botão de Debug
-        if (_antiCheatState?.isActive == true && !isHalfScreen)
+        if (ChronosProfile.isDev && _antiCheatState?.isActive == true && !isHalfScreen)
           IconButton(
-            tooltip: '🛠️ [DEBUG] Sair do Anti-Cheat Imediatamente',
+            tooltip: tr.debugSairDoAntiCheatImediatamente,
             icon: const Icon(Icons.bug_report, color: Colors.purpleAccent),
             onPressed: () async {
               final res = await debugDisableAntiCheat();
@@ -1118,22 +1153,9 @@ class _HomeScreenState extends State<HomeScreen> {
             },
           ),
 
-        // Botão Instalação Rápida de Extensões
-        if (!isHalfScreen)
-          IconButton(
-            tooltip: 'Instalar Extensões em Todos Navegadores',
-            icon: const Icon(Icons.extension, color: Colors.blueAccent),
-            onPressed: () async {
-              final res = await BrowserExtensionInstaller.installAll(
-                isAntiCheatActive: _antiCheatState?.isActive ?? false,
-                forceMandatory: true,
-              );
-              _showSnack(res.message, res.success);
-            },
-          ),
-
+        if (ChronosProfile.isDev)
         PopupMenuButton<String>(
-          tooltip: 'Ações & Configuração',
+          tooltip: tr.acoesConfiguracao,
           icon: const Icon(Icons.more_vert),
           onSelected: _handleMenuAction,
           itemBuilder: (context) => _buildMenuItems(isHalfScreen: isHalfScreen),
@@ -1150,6 +1172,8 @@ class _HomeScreenState extends State<HomeScreen> {
     final isCompactSidebar = screenWidth < 960;
     final isCompact = screenWidth < 900;
     final isHalfScreen = screenWidth < 780;
+    final tabCount = 4 + (_showQuarantine ? 1 : 0) + (ChronosProfile.isDev ? 1 : 0);
+    if (_currentTabIndex >= tabCount) _currentTabIndex = 0;
 
     final tabViews = [
       _buildDashboardTab(),
@@ -1169,8 +1193,8 @@ class _HomeScreenState extends State<HomeScreen> {
           _startStream();
         },
       ),
-      const QuarantineView(),
-      SingleChildScrollView(
+      if (_showQuarantine) const QuarantineView(),
+      if (ChronosProfile.isDev) SingleChildScrollView(
         padding: const EdgeInsets.all(16),
         child: DbTestPanel(
           activeEntityId: _activeEntityId,
@@ -1212,37 +1236,39 @@ class _HomeScreenState extends State<HomeScreen> {
       bottomNavigationBar: NavigationBar(
         selectedIndex: _currentTabIndex,
         onDestinationSelected: (index) => setState(() => _currentTabIndex = index),
-        destinations: const [
+        destinations: [
           NavigationDestination(
             icon: Icon(Icons.dashboard_outlined),
             selectedIcon: Icon(Icons.dashboard),
-            label: 'Tempo',
+            label: tr.tempo,
           ),
           NavigationDestination(
             icon: Icon(Icons.bar_chart_outlined),
             selectedIcon: Icon(Icons.bar_chart),
-            label: 'Métricas',
+            label: tr.metricas,
           ),
           NavigationDestination(
             icon: Icon(Icons.rule_folder_outlined),
             selectedIcon: Icon(Icons.rule_folder),
-            label: 'Regras',
+            label: tr.regras,
           ),
           NavigationDestination(
             icon: Icon(Icons.settings_outlined),
             selectedIcon: Icon(Icons.settings),
-            label: 'Ajustes',
+            label: tr.ajustes,
           ),
+          if (_showQuarantine)
           NavigationDestination(
             icon: Icon(Icons.security_outlined),
             selectedIcon: Icon(Icons.security),
-            label: 'Nuke',
+            label: tr.nuke,
           ),
-          NavigationDestination(
-            icon: Icon(Icons.storage_outlined),
-            selectedIcon: Icon(Icons.storage),
-            label: 'SQLite',
-          ),
+          if (ChronosProfile.isDev)
+            NavigationDestination(
+              icon: Icon(Icons.storage_outlined),
+              selectedIcon: Icon(Icons.storage),
+              label: tr.sqlite,
+            ),
         ],
       ),
     );
@@ -1267,15 +1293,15 @@ class _HomeScreenState extends State<HomeScreen> {
                     child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.tealAccent),
                   ),
                   const SizedBox(height: 16),
-                  const Text(
-                    'Sincronizando com o motor de monitoramento...',
+                  Text(
+                    tr.sincronizandoComOMotorDeMonitoramento,
                     style: TextStyle(color: Colors.white70, fontSize: 14),
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 16),
                   FilledButton.tonal(
                     onPressed: _startStream,
-                    child: const Text('Tentar Conectar Agora'),
+                    child: Text(tr.tentarConectarAgora),
                   ),
                 ],
               ),
@@ -1324,7 +1350,7 @@ class _HomeScreenState extends State<HomeScreen> {
                       const SizedBox(width: 8),
                       Expanded(
                         child: Text(
-                          'Etapa Inicial: teste a qualquer momento o cadastro e personalização de bloqueios.',
+                          tr.etapaInicialTesteAQualquerMomento,
                           style: TextStyle(
                             fontSize: 12,
                             color: isDark ? Colors.white70 : const Color(0xFF334155),
@@ -1339,8 +1365,8 @@ class _HomeScreenState extends State<HomeScreen> {
                           foregroundColor: isDark ? Colors.tealAccent : Colors.teal.shade900,
                         ),
                         icon: const Icon(Icons.settings_backup_restore, size: 16),
-                        label: const Text(
-                          'Voltar ao Cadastro',
+                        label: Text(
+                          tr.voltarAoCadastro,
                           style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
                         ),
                         onPressed: widget.onResetOnboarding,
@@ -1366,7 +1392,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             const SizedBox(width: 8),
                             Expanded(
                               child: Text(
-                                '⚡ ${activeSessions.length} Sessões Ativas Simultaneamente! O tempo de tela está sendo cronometrado em paralelo.',
+                                tr.p0SessoesAtivasSimultaneamenteOTempo(activeSessions.length),
                                 style: const TextStyle(
                                   color: Colors.purpleAccent,
                                   fontWeight: FontWeight.bold,
@@ -1391,14 +1417,14 @@ class _HomeScreenState extends State<HomeScreen> {
 
                 final controlsContent = Column(
                   children: [
-                    _QuotaControlsCard(
+                    if (ChronosProfile.isDev) _QuotaControlsCard(
                       activeEntityId: currentEntity,
                       isBlocked: isBlocked,
                       onQuotaChanged: _showSnack,
                       onStreamRestart: _startStream,
                     ),
-                    const SizedBox(height: 16),
-                    DbTestPanel(
+                    if (ChronosProfile.isDev) const SizedBox(height: 16),
+                    if (ChronosProfile.isDev) DbTestPanel(
                       activeEntityId: currentEntity,
                       onDbChanged: _startStream,
                       onResetOnboarding: widget.onResetOnboarding,
@@ -1418,7 +1444,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         borderRadius: BorderRadius.circular(10),
                         border: Border.all(color: Colors.amber.shade700),
                       ),
-                      child: const Row(
+                      child: Row(
                         children: [
                           SizedBox(
                             width: 14,
@@ -1428,7 +1454,7 @@ class _HomeScreenState extends State<HomeScreen> {
                           SizedBox(width: 10),
                           Expanded(
                             child: Text(
-                              'Sincronizando com o motor de monitoramento...',
+                              tr.sincronizandoComOMotorDeMonitoramento,
                               style: TextStyle(color: Colors.amberAccent, fontSize: 12),
                             ),
                           ),
@@ -1500,13 +1526,13 @@ class _SessionCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final displayName = data['display_name']?.toString() ?? 'Sessão';
+    final displayName = data['display_name']?.toString() ?? tr.sessao;
     final isBlocked = data['is_blocked'] == true;
     final remainingSeconds = (data['remaining_seconds'] as num?)?.toInt() ?? 0;
     final totalQuota = (data['daily_quota_seconds'] as num?)?.toInt() ?? 0;
     final consumed = (data['consumed_seconds'] as num?)?.toInt() ?? 0;
     final targetType = data['target_type']?.toString() ?? 'GROUP';
-    final detectedLabel = data['detected_activity_label']?.toString() ?? 'Em execução';
+    final detectedLabel = data['detected_activity_label']?.toString() ?? tr.emExecucao;
 
     final Color statusColor = isBlocked ? Colors.redAccent : Colors.tealAccent;
     final double progress = totalQuota > 0 ? (consumed / totalQuota).clamp(0.0, 1.0) : 0.0;
@@ -1563,7 +1589,7 @@ class _SessionCard extends StatelessWidget {
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Text(
-                    isBlocked ? 'BLOQUEADO' : 'TEMPO ATIVO',
+                    isBlocked ? 'BLOQUEADO' : tr.tempoAtivo,
                     style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.white),
                   ),
                 ),
@@ -1602,11 +1628,11 @@ class _SessionCard extends StatelessWidget {
               runSpacing: 4,
               children: [
                 Text(
-                  'Consumido hoje: ${_formatTime(consumed)}',
+                  tr.consumidoHojeP0(_formatTime(consumed)),
                   style: TextStyle(color: subTextColor, fontSize: 11),
                 ),
                 Text(
-                  'Limite: ${_formatTime(totalQuota)} (${(progress * 100).toStringAsFixed(1)}%)',
+                  tr.limiteP0P1(_formatTime(totalQuota), (progress * 100).toStringAsFixed(1)),
                   style: TextStyle(color: subTextColor, fontSize: 11),
                 ),
               ],
@@ -1729,13 +1755,13 @@ class _LiveMonitorCard extends StatelessWidget {
                           borderRadius: BorderRadius.circular(20),
                           border: Border.all(color: Colors.amberAccent, width: 0.8),
                         ),
-                        child: const Row(
+                        child: Row(
                           mainAxisSize: MainAxisSize.min,
                           children: [
                             Icon(Icons.lock_clock, size: 14, color: Colors.amberAccent),
                             SizedBox(width: 4),
                             Text(
-                              'Catraca Ativa',
+                              tr.catracaAtiva,
                               style: TextStyle(
                                 fontSize: 11,
                                 color: Colors.amberAccent,
@@ -1758,7 +1784,7 @@ class _LiveMonitorCard extends StatelessWidget {
                           const Icon(Icons.vpn_key, size: 14, color: Colors.purpleAccent),
                           const SizedBox(width: 4),
                           Text(
-                            'Tokens: ${t.emergencyTokensRemaining}/2',
+                            tr.tokensP02(t.emergencyTokensRemaining),
                             style: const TextStyle(
                               fontSize: 11,
                               color: Colors.purpleAccent,
@@ -1805,11 +1831,11 @@ class _LiveMonitorCard extends StatelessWidget {
               runSpacing: 4,
               children: [
                 Text(
-                  'Consumido hoje: ${_formatTime(consumed)}',
+                  tr.consumidoHojeP0(_formatTime(consumed)),
                   style: TextStyle(color: subTextColor, fontSize: 12),
                 ),
                 Text(
-                  'Limite de tempo de tela: ${_formatTime(totalQuota)} (${(progress * 100).toStringAsFixed(1)}%)',
+                  tr.limiteDeTempoDeTelaP0(_formatTime(totalQuota), (progress * 100).toStringAsFixed(1)),
                   style: TextStyle(color: subTextColor, fontSize: 12),
                 ),
               ],
@@ -1869,8 +1895,8 @@ class _QuotaControlsCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text(
-              'Controles de Tempo de Tela & Catraca (Ratchet)',
+            Text(
+              tr.controlesDeTempoDeTelaCatraca,
               style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
             ),
             const SizedBox(height: 12),
@@ -1880,7 +1906,7 @@ class _QuotaControlsCard extends StatelessWidget {
                 final btnList = <Widget>[
                   ElevatedButton.icon(
                     icon: const Icon(Icons.bolt, size: 18),
-                    label: const Text('Reduzir Tempo de Tela (Teste 15s)'),
+                    label: Text(tr.reduzirTempoDeTelaTeste15s),
                     onPressed: () async {
                       final res = await changeQuota(
                         entityId: activeEntityId,
@@ -1892,7 +1918,7 @@ class _QuotaControlsCard extends StatelessWidget {
                   ),
                   ElevatedButton.icon(
                     icon: const Icon(Icons.add_circle_outline, size: 18),
-                    label: const Text('Tentar Aumentar Tempo de Tela (+2h)'),
+                    label: Text(tr.tentarAumentarTempoDeTela2h),
                     onPressed: () async {
                       final res = await changeQuota(
                         entityId: activeEntityId,
@@ -1904,14 +1930,14 @@ class _QuotaControlsCard extends StatelessWidget {
                   ),
                   FilledButton.tonalIcon(
                     icon: const Icon(Icons.lock_clock, size: 18),
-                    label: const Text('Trancar Catraca (24h)'),
+                    label: Text(tr.trancarCatraca24h),
                     onPressed: () async {
                       final ok = await lockRatchet(
                         entityId: activeEntityId,
                         hours: 24,
                       );
                       if (ok) {
-                        onQuotaChanged('Catraca trancada por 24h! Aumentos proibidos.', true);
+                        onQuotaChanged(tr.catracaTrancadaPor24hAumentosProibidos, true);
                         onStreamRestart();
                       }
                     },
@@ -1922,7 +1948,7 @@ class _QuotaControlsCard extends StatelessWidget {
                         backgroundColor: Colors.orange.shade800,
                       ),
                       icon: const Icon(Icons.warning_amber, size: 18),
-                      label: const Text('Usar Token de Emergência (+1h)'),
+                      label: Text(tr.usarTokenDeEmergencia1h),
                       onPressed: () async {
                         final res = await consumeEmergencyToken(entityId: activeEntityId);
                         onQuotaChanged(res.message, res.success);

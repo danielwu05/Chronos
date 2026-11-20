@@ -1,5 +1,7 @@
+import 'package:chronos_app/services/app_locale.dart';
 import 'package:flutter/material.dart';
 import 'package:chronos_app/src/rust/api/simple.dart';
+import 'package:chronos_app/src/rust/api/youtube.dart';
 
 class AnalyticsView extends StatefulWidget {
   const AnalyticsView({super.key});
@@ -10,6 +12,8 @@ class AnalyticsView extends StatefulWidget {
 
 class _AnalyticsViewState extends State<AnalyticsView> {
   AnalyticsSummaryDto? _summary;
+  List<YtExemptTotalDto> _ytExemptToday = const [];
+  List<YtExemptTotalDto> _ytExempt7d = const [];
   bool _loading = true;
 
   @override
@@ -22,9 +26,13 @@ class _AnalyticsViewState extends State<AnalyticsView> {
     setState(() => _loading = true);
     try {
       final s = await getAnalyticsSummary();
+      final ytToday = await getYoutubeExemptTotals(days: 1);
+      final yt7d = await getYoutubeExemptTotals(days: 7);
       if (mounted) {
         setState(() {
           _summary = s;
+          _ytExemptToday = ytToday;
+          _ytExempt7d = yt7d;
           _loading = false;
         });
       }
@@ -38,7 +46,7 @@ class _AnalyticsViewState extends State<AnalyticsView> {
     final hours = totalSeconds ~/ 3600;
     final minutes = (totalSeconds % 3600) ~/ 60;
     if (hours > 0 && minutes > 0) {
-      return '${hours}h ${minutes}m';
+      return tr.p0HP1M(hours, minutes);
     } else if (hours > 0) {
       return '${hours}h';
     } else {
@@ -89,7 +97,7 @@ class _AnalyticsViewState extends State<AnalyticsView> {
     final totalToday = s?.totalConsumedTodaySeconds ?? 0;
     final total7d = s?.totalConsumed7DSeconds ?? 0;
     final avg7d = s?.dailyAverage7DSeconds ?? 0;
-    final peakLabel = (s?.peakDayLabel.isNotEmpty ?? false) ? s!.peakDayLabel : 'Sem dados';
+    final peakLabel = (s?.peakDayLabel.isNotEmpty ?? false) ? s!.peakDayLabel : tr.semDados;
     final peakSeconds = s?.peakDaySeconds ?? 0;
     final compPercent = s?.comparisonVsPrevWeekPercent ?? 0.0;
     final topEntities = s?.topEntities7D ?? [];
@@ -115,7 +123,7 @@ class _AnalyticsViewState extends State<AnalyticsView> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'Estatísticas de Tempo de Tela',
+                          tr.estatisticasDeTempoDeTela,
                           style: theme.textTheme.headlineSmall?.copyWith(
                             fontWeight: FontWeight.bold,
                             letterSpacing: -0.5,
@@ -123,7 +131,7 @@ class _AnalyticsViewState extends State<AnalyticsView> {
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          'Consumo consolidado, tendências semanais e ranking de aplicativos e sites.',
+                          tr.consumoConsolidadoTendenciasSemanaisERanking,
                           style: TextStyle(
                             fontSize: 13,
                             color: isDark ? Colors.white60 : Colors.black54,
@@ -137,7 +145,7 @@ class _AnalyticsViewState extends State<AnalyticsView> {
                         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                       ),
                       icon: const Icon(Icons.refresh, size: 16),
-                      label: const Text('Atualizar', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                      label: Text(tr.atualizar, style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
                       onPressed: _loadSummary,
                     );
 
@@ -170,9 +178,9 @@ class _AnalyticsViewState extends State<AnalyticsView> {
                     children: [
                       Expanded(
                         child: _MetricCard(
-                          title: 'Consumo Hoje',
+                          title: tr.consumoHoje,
                           value: _formatDuration(totalToday),
-                          subtitle: 'Tempo em apps/sites monitorados',
+                          subtitle: tr.tempoEmAppsSitesMonitorados,
                           icon: Icons.today,
                           color: Colors.tealAccent,
                         ),
@@ -180,9 +188,9 @@ class _AnalyticsViewState extends State<AnalyticsView> {
                       const SizedBox(width: 12),
                       Expanded(
                         child: _MetricCard(
-                          title: 'Média Semanal',
+                          title: tr.mediaSemanal,
                           value: '${_formatDuration(avg7d)} / dia',
-                          subtitle: 'Baseado nos últimos 7 dias',
+                          subtitle: tr.baseadoNosUltimos7Dias,
                           icon: Icons.date_range,
                           color: Colors.blueAccent,
                         ),
@@ -190,7 +198,7 @@ class _AnalyticsViewState extends State<AnalyticsView> {
                       const SizedBox(width: 12),
                       Expanded(
                         child: _MetricCard(
-                          title: 'Dia de Pico',
+                          title: tr.diaDePico,
                           value: peakSeconds > 0 ? _formatDuration(peakSeconds) : '0m',
                           subtitle: peakLabel,
                           icon: Icons.show_chart,
@@ -200,11 +208,11 @@ class _AnalyticsViewState extends State<AnalyticsView> {
                       const SizedBox(width: 12),
                       Expanded(
                         child: _MetricCard(
-                          title: 'Tendência vs. Semana Anterior',
+                          title: tr.tendenciaVsSemanaAnterior,
                           value: compPercent == 0.0
-                              ? 'Estável'
+                              ? tr.estavel
                               : '${compPercent > 0 ? '+' : ''}${compPercent.toStringAsFixed(1)}%',
-                          subtitle: compPercent > 0 ? 'Mais tempo de tela' : 'Menos tempo de tela',
+                          subtitle: compPercent > 0 ? tr.maisTempoDeTela : tr.menosTempoDeTela,
                           icon: compPercent > 0 ? Icons.trending_up : Icons.trending_down,
                           color: compPercent > 0 ? Colors.redAccent : Colors.greenAccent,
                         ),
@@ -218,9 +226,9 @@ class _AnalyticsViewState extends State<AnalyticsView> {
                         children: [
                           Expanded(
                             child: _MetricCard(
-                              title: 'Consumo Hoje',
+                              title: tr.consumoHoje,
                               value: _formatDuration(totalToday),
-                              subtitle: 'Apps/sites monitorados',
+                              subtitle: tr.appsSitesMonitorados,
                               icon: Icons.today,
                               color: Colors.tealAccent,
                             ),
@@ -228,9 +236,9 @@ class _AnalyticsViewState extends State<AnalyticsView> {
                           const SizedBox(width: 12),
                           Expanded(
                             child: _MetricCard(
-                              title: 'Média Diária',
+                              title: tr.mediaDiaria,
                               value: '${_formatDuration(avg7d)}/dia',
-                              subtitle: 'Últimos 7 dias',
+                              subtitle: tr.ultimos7Dias,
                               icon: Icons.date_range,
                               color: Colors.blueAccent,
                             ),
@@ -242,7 +250,7 @@ class _AnalyticsViewState extends State<AnalyticsView> {
                         children: [
                           Expanded(
                             child: _MetricCard(
-                              title: 'Dia de Pico',
+                              title: tr.diaDePico,
                               value: peakSeconds > 0 ? _formatDuration(peakSeconds) : '0m',
                               subtitle: peakLabel,
                               icon: Icons.show_chart,
@@ -252,11 +260,11 @@ class _AnalyticsViewState extends State<AnalyticsView> {
                           const SizedBox(width: 12),
                           Expanded(
                             child: _MetricCard(
-                              title: 'Tendência',
+                              title: tr.tendencia,
                               value: compPercent == 0.0
-                                  ? 'Estável'
+                                  ? tr.estavel
                                   : '${compPercent > 0 ? '+' : ''}${compPercent.toStringAsFixed(1)}%',
-                              subtitle: compPercent > 0 ? 'Mais tela' : 'Menos tela',
+                              subtitle: compPercent > 0 ? tr.maisTela : tr.menosTela,
                               icon: compPercent > 0 ? Icons.trending_up : Icons.trending_down,
                               color: compPercent > 0 ? Colors.redAccent : Colors.greenAccent,
                             ),
@@ -265,6 +273,19 @@ class _AnalyticsViewState extends State<AnalyticsView> {
                       ),
                     ],
                   ),
+                if (_ytExemptToday.isNotEmpty || _ytExempt7d.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  _MetricCard(
+                    title: tr.tempoIsentoNoYoutubeListaBranca,
+                    value: _formatDuration(_ytExemptToday.fold<int>(0, (a, e) => a + e.seconds.toInt())),
+                    subtitle: [
+                      'Hoje — não descontou do tempo de tela',
+                      for (final e in _ytExempt7d) tr.p0P1Em7Dias(e.label, _formatDuration(e.seconds.toInt())),
+                    ].join('\n'),
+                    icon: Icons.smart_display,
+                    color: Colors.redAccent,
+                  ),
+                ],
                 const SizedBox(height: 24),
 
                 // Gráfico de Barras dos Últimos 7 Dias
@@ -284,18 +305,18 @@ class _AnalyticsViewState extends State<AnalyticsView> {
                         Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            const Row(
+                            Row(
                               children: [
                                 Icon(Icons.bar_chart, color: Colors.tealAccent, size: 22),
                                 SizedBox(width: 8),
                                 Text(
-                                  'Consumo Diário nos Últimos 7 Dias',
+                                  tr.consumoDiarioNosUltimos7Dias,
                                   style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
                                 ),
                               ],
                             ),
                             Text(
-                              'Total: ${_formatDuration(total7d)}',
+                              tr.totalP0(_formatDuration(total7d)),
                               style: TextStyle(
                                 fontSize: 13,
                                 fontWeight: FontWeight.bold,
@@ -306,10 +327,10 @@ class _AnalyticsViewState extends State<AnalyticsView> {
                         ),
                         const SizedBox(height: 20),
                         if (dailyBreakdown.isEmpty)
-                          const Padding(
+                          Padding(
                             padding: EdgeInsets.symmetric(vertical: 32),
                             child: Center(
-                              child: Text('Nenhum dado diário registrado.', style: TextStyle(color: Colors.white54)),
+                              child: Text(tr.nenhumDadoDiarioRegistrado, style: TextStyle(color: Colors.white54)),
                             ),
                           )
                         else
@@ -422,13 +443,13 @@ class _AnalyticsViewState extends State<AnalyticsView> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Row(
+                        Row(
                           children: [
                             Icon(Icons.leaderboard, color: Colors.purpleAccent, size: 22),
                             SizedBox(width: 8),
                             Expanded(
                               child: Text(
-                                'Top 5 Apps & Sites Mais Consumidos (Últimos 7 Dias)',
+                                tr.top5AppsSitesMaisConsumidos,
                                 style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
                               ),
                             ),
@@ -436,11 +457,11 @@ class _AnalyticsViewState extends State<AnalyticsView> {
                         ),
                         const SizedBox(height: 16),
                         if (topEntities.isEmpty)
-                          const Padding(
+                          Padding(
                             padding: EdgeInsets.symmetric(vertical: 24),
                             child: Center(
                               child: Text(
-                                'Nenhuma atividade registrada na semana ainda.',
+                                tr.nenhumaAtividadeRegistradaNaSemanaAinda,
                                 style: TextStyle(color: Colors.white54, fontSize: 13),
                               ),
                             ),
@@ -532,7 +553,7 @@ class _AnalyticsViewState extends State<AnalyticsView> {
                                               ),
                                             ),
                                             Text(
-                                              '${item.percentage.toStringAsFixed(1)}% do total',
+                                              tr.p0DoTotal(item.percentage.toStringAsFixed(1)),
                                               style: TextStyle(
                                                 fontSize: 11,
                                                 color: isDark ? Colors.white54 : Colors.black54,

@@ -54,7 +54,7 @@ jobs:
 
       - name: Build daemon (must exist before the Flutter bundle step)
         working-directory: rust
-        run: cargo build --release --bin chronos_proxy
+        run: cargo build --release --bin chronos_proxy --bin chronos_vault
 
       - name: Rust tests
         working-directory: rust
@@ -65,6 +65,26 @@ jobs:
           flutter pub get
           flutter test
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      # Firefox release only installs Mozilla-signed add-ons. The signed XPI ships inside the
+      # bundle (chronos_extension_firefox/signed.xpi), so users need no AMO account. Version
+      # "<release>.1" never collides with the 3-part versions signed locally by developers.
+      - name: Sign Firefox extension (AMO, unlisted)
+        env:
+          AMO_JWT_ISSUER: ${{ secrets.AMO_JWT_ISSUER }}
+          AMO_JWT_SECRET: ${{ secrets.AMO_JWT_SECRET }}
+        run: |
+          if [ -z "$AMO_JWT_ISSUER" ] || [ -z "$AMO_JWT_SECRET" ]; then
+            echo "::warning::Segredos AMO_JWT_ISSUER/AMO_JWT_SECRET ausentes: release sem extensão do Firefox assinada."
+            exit 0
+          fi
+          CHRONOS_XPI_VERSION="${{ steps.ver.outputs.version }}.1" \
+          CHRONOS_XPI_OUT="chronos_extension_firefox/signed.xpi" \
+            scripts/sign-firefox.sh
+
       - name: Build Linux bundle
         run: |
           flutter build linux --release \
@@ -72,6 +92,10 @@ jobs:
             --dart-define=CHRONOS_VERSION=${{ steps.ver.outputs.version }}
           test -x build/linux/x64/release/bundle/chronos_app
           test -f build/linux/x64/release/bundle/chronos_proxy
+          test -f build/linux/x64/release/bundle/chronos_vault
+          if [ -f chronos_extension_firefox/signed.xpi ]; then
+            test -f build/linux/x64/release/bundle/data/chronos_assets/chronos_extension_firefox/signed.xpi
+          fi
           test -f build/linux/x64/release/bundle/data/chronos_assets/chronos_extension/manifest.json
 
       - name: Package, manifest and signature

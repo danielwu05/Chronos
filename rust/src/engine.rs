@@ -590,7 +590,17 @@ pub fn evaluate_app_target_activity(
             && (active_details.initial_class == name_lower
                 || active_details.initial_class == exec_lower))
         || (!win_lower.is_empty()
+            && !active_details.is_browser
             && (win_lower == name_lower || win_lower.starts_with(&format!("{name_lower} - "))));
+
+    // App used as a site in the focused browser tab (youtube.com for "YouTube", ...).
+    let in_browser_tab = !is_launcher && active_details.is_browser && {
+        let mut domains: Vec<&str> = crate::proxy::known_domains_for_app(&name_lower).to_vec();
+        domains.extend_from_slice(crate::proxy::known_domains_for_app(&exec_lower));
+        !domains.is_empty()
+            && crate::detector::WindowInfo::active_browser_tab_host()
+                .is_some_and(|h| domains.iter().any(|d| h == *d || h.ends_with(&format!(".{d}"))))
+    };
 
     let has_window = all_windows_info
         .iter()
@@ -603,6 +613,8 @@ pub fn evaluate_app_target_activity(
 
     if is_focused {
         Some(format!("App '{}' em foco", app.name))
+    } else if in_browser_tab {
+        Some(format!("App '{}' no navegador", app.name))
     } else if has_window {
         Some(format!("App '{}' com janela aberta", app.name))
     } else if is_running_bg {
@@ -612,11 +624,23 @@ pub fn evaluate_app_target_activity(
     }
 }
 
-fn enforce_app_target_block(app: &AppTarget, wl_groups: &[db::WhitelistGroupItem]) {
+fn enforce_app_target_block(
+    app: &AppTarget,
+    wl_groups: &[db::WhitelistGroupItem],
+    reason: &str,
+    windows: &[crate::detector::WindowInfo],
+) {
     if db::is_item_in_whitelist_groups(wl_groups, &app.name)
         || db::is_item_in_whitelist_groups(wl_groups, &app.exec)
     {
         return;
+    }
+
+    // Block screen (like the +18 cover) only when the app was really open.
+    let was_open = (!app.is_launcher() && get_detector().lock().is_process_running(&app.exec))
+        || windows.iter().any(|w| w.matches_app(&app.name, &app.exec));
+    if was_open {
+        crate::screen_guard::publish_app_block(&app.name, reason);
     }
 
     if app.is_launcher_hosted_game() {
@@ -630,6 +654,15 @@ fn enforce_app_target_block(app: &AppTarget, wl_groups: &[db::WhitelistGroupItem
         ActivityDetector::close_window_by_title(&app.exec);
     } else {
         get_detector().lock().kill_processes(&app.exec);
+        // Its windows, whatever process / wrapper owns them (never a browser: web-apps
+        // share the browser's process and are closed by window instead).
+        // Matched by window class only: a terminal titled "discord - nvim" is not Discord.
+        let by_class = |w: &crate::detector::WindowInfo| {
+            crate::detector::WindowInfo { title: String::new(), ..w.clone() }.matches_app(&app.name, &app.exec)
+        };
+        for w in windows.iter().filter(|w| w.pid > 1 && !w.is_browser() && by_class(w)) {
+            get_detector().lock().kill_pid_tree(w.pid);
+        }
         ActivityDetector::close_window_by_title(&app.name);
         ActivityDetector::close_window_by_title(&app.exec);
     }
@@ -698,19 +731,59 @@ pub fn parse_group_pattern(pattern: &str) -> (Vec<String>, Vec<String>) {
     (apps, sites)
 }
 
+/// Which of `patterns` the playing media (tab title/url label) belongs to.
+fn media_matched_pattern(media_title: Option<&str>, patterns: &[String]) -> Vec<String> {
+    let t = media_title.unwrap_or("").to_lowercase();
+    if t.is_empty() {
+        return Vec::new();
+    }
+    patterns
+        .iter()
+        .find(|p| {
+            let clean = p.trim().trim_start_matches("www.").to_lowercase();
+            let root = clean.split('.').next().unwrap_or("");
+            (!clean.is_empty() && t.contains(&clean)) || (root.len() >= 3 && t.contains(root))
+        })
+        .cloned()
+        .into_iter()
+        .collect()
+}
+
+/// Tamper penalty (set by the root vault): every session stays blocked until local midnight.
+pub fn penalty_active(now: i64) -> bool {
+    db::try_get_conn().is_some()
+        && db::get_config("penalty_until")
+            .and_then(|v| v.parse::<i64>().ok())
+            .is_some_and(|until| until > now)
+}
+
+/// Reaction to tampering chosen by the user: "restore" (default) or "restore_penalty".
+pub fn tamper_reaction() -> String {
+    db::get_config("tamper_reaction").unwrap_or_else(|| "restore".to_string())
+}
+
+/// Changing to the lighter reaction is refused while anti-cheat is active.
+pub fn set_tamper_reaction(reaction: &str) -> Result<(), String> {
+    if reaction != "restore" && reaction != "restore_penalty" {
+        return Err("Reação inválida.".to_string());
+    }
+    if reaction == "restore" && tamper_reaction() == "restore_penalty" && get_anti_cheat_state().is_active {
+        return Err("Anti-Burla ativo: a penalidade por burla não pode ser desligada agora.".to_string());
+    }
+    db::set_config("tamper_reaction", reaction).map_err(|e| e.to_string())
+}
+
 pub fn tick_entity(entity_id: &str) -> Option<TickState> {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs() as i64;
+    let now = crate::trusted_time::now_secs();
+    let penalty = penalty_active(now);
 
     // 1. Consulta rápida dos parâmetros da regra e horário local em um único lock rápido
     let (display_name, daily_quota, forced_blocked, ratchet_locked_until, target_type, pattern, weekend_quota, schedule_json, day_of_week, cur_h, cur_m, is_weekend) = {
         let conn = db::get_conn().lock();
         let (dow, h, m): (i32, i32, i32) = conn
             .query_row(
-                "SELECT CAST(strftime('%w', 'now', 'localtime') AS INTEGER), CAST(strftime('%H', 'now', 'localtime') AS INTEGER), CAST(strftime('%M', 'now', 'localtime') AS INTEGER)",
-                [],
+                "SELECT CAST(strftime('%w', ?1, 'unixepoch', 'localtime') AS INTEGER), CAST(strftime('%H', ?1, 'unixepoch', 'localtime') AS INTEGER), CAST(strftime('%M', ?1, 'unixepoch', 'localtime') AS INTEGER)",
+                [crate::trusted_time::now_secs()],
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )
             .unwrap_or((1, 12, 0));
@@ -741,6 +814,8 @@ pub fn tick_entity(entity_id: &str) -> Option<TickState> {
 
         (name, quota, blocked, ratchet, ttype, pat, w_quota, sched, dow, h, m, weekend)
     };
+    // Holiday > weekend > weekday (outside the DB lock: reads app_config).
+    let (daily_quota, _holiday_name) = crate::holidays::apply_holiday_quota(entity_id, daily_quota);
 
     let (is_active_day, is_blocked_by_window) =
         evaluate_schedule_window(schedule_json.as_deref(), cur_h, cur_m, day_of_week);
@@ -754,6 +829,11 @@ pub fn tick_entity(entity_id: &str) -> Option<TickState> {
 
     let mut is_active = false;
     let mut is_bg_media = false;
+    // Where the activity came from: foreground (focused/open window, focused browser tab)
+    // vs media. `matched_items` are the app/site identifiers that made the rule active,
+    // used for per-item whitelisting.
+    let mut via_foreground = false;
+    let mut matched_items: Vec<String> = Vec::new();
     let mut activity_label = "Nenhuma atividade detectada".to_string();
 
     if is_active_day {
@@ -766,6 +846,9 @@ pub fn tick_entity(entity_id: &str) -> Option<TickState> {
                         evaluate_app_target_activity(app, &active_details, &win_lower, &all_windows_info)
                     {
                         is_active = true;
+                        via_foreground = true;
+                        matched_items.push(app.name.clone());
+                        matched_items.push(app.exec.clone());
                         activity_label = label;
                         break;
                     }
@@ -776,6 +859,11 @@ pub fn tick_entity(entity_id: &str) -> Option<TickState> {
                     if has_app_media {
                         is_active = true;
                         is_bg_media = true;
+                        let t = app_media_title.clone().unwrap_or_default().to_lowercase();
+                        if let Some(a) = apps.iter().find(|a| !a.name.is_empty() && t.contains(&a.name.to_lowercase())) {
+                            matched_items.push(a.name.clone());
+                            matched_items.push(a.exec.clone());
+                        }
                         activity_label = format!("Sessão '{}' em reprodução: {}", display_name, app_media_title.unwrap_or_default());
                     }
                 }
@@ -783,6 +871,8 @@ pub fn tick_entity(entity_id: &str) -> Option<TickState> {
                     for d in &sites {
                         if matches_site_or_keyword(d, &win_lower, &browser_url_lower, &browser_title_lower) {
                             is_active = true;
+                            via_foreground = true;
+                            matched_items.push(d.clone());
                             activity_label = format!("Sessão '{}' ativa via web/palavra '{}'", display_name, d);
                             break;
                         }
@@ -793,6 +883,7 @@ pub fn tick_entity(entity_id: &str) -> Option<TickState> {
                     if has_media {
                         is_active = true;
                         is_bg_media = true;
+                        matched_items.extend(media_matched_pattern(media_title.as_deref(), &sites));
                         activity_label = format!("Sessão '{}' em reprodução: {}", display_name, media_title.unwrap_or_default());
                     }
                 }
@@ -812,6 +903,8 @@ pub fn tick_entity(entity_id: &str) -> Option<TickState> {
                 for item in &items {
                     if matches_site_or_keyword(item, &win_lower, &browser_url_lower, &browser_title_lower) {
                         is_active = true;
+                        via_foreground = true;
+                        matched_items.push(item.clone());
                         activity_label = format!("'{}' ativo via '{}'", display_name, item);
                         break;
                     }
@@ -821,6 +914,7 @@ pub fn tick_entity(entity_id: &str) -> Option<TickState> {
                     if has_media {
                         is_active = true;
                         is_bg_media = true;
+                        matched_items.extend(media_matched_pattern(media_title.as_deref(), &items));
                         activity_label = format!("'{}' em reprodução: {}", display_name, media_title.unwrap_or_default());
                     }
                 }
@@ -836,6 +930,9 @@ pub fn tick_entity(entity_id: &str) -> Option<TickState> {
                     evaluate_app_target_activity(&app, &active_details, &win_lower, &all_windows_info)
                 {
                     is_active = true;
+                    via_foreground = true;
+                    matched_items.push(display_name.clone());
+                    matched_items.push(proc_target.to_string());
                     activity_label = label;
                 } else {
                     let (has_media, media_title) =
@@ -843,6 +940,8 @@ pub fn tick_entity(entity_id: &str) -> Option<TickState> {
                     if has_media {
                         is_active = true;
                         is_bg_media = true;
+                        matched_items.push(display_name.clone());
+                        matched_items.push(proc_target.to_string());
                         activity_label = format!(
                             "Tocando em 2º plano: {}",
                             media_title.unwrap_or_default()
@@ -856,11 +955,30 @@ pub fn tick_entity(entity_id: &str) -> Option<TickState> {
     }
 
     let wl_groups = db::get_all_whitelist_groups();
-    let is_whitelisted = db::is_item_in_whitelist_groups(&wl_groups, entity_id) || {
-        let (apps, sites) = parse_group_pattern_rich(&pattern);
-        apps.iter().any(|a| db::is_item_in_whitelist_groups(&wl_groups, &a.name) || db::is_item_in_whitelist_groups(&wl_groups, &a.exec))
-            || sites.iter().any(|s| db::is_item_in_whitelist_groups(&wl_groups, s))
+    // Whitelist applies to the item that is actually in use (or the whole rule when the
+    // rule itself is whitelisted): whitelisted activity is neither counted nor blocked,
+    // while the rule's other items keep counting.
+    let is_whitelisted = db::is_item_in_whitelist_groups(&wl_groups, entity_id)
+        || matched_items
+            .iter()
+            .any(|m| !m.trim().is_empty() && db::is_item_in_whitelist_groups(&wl_groups, m));
+
+    // YouTube content-type whitelist: watching an exempt type (under its daily cap)
+    // keeps the entity "active" but does not consume its quota.
+    let yt_exempt_type = if is_active && !is_whitelisted {
+        let yt_related = crate::youtube::rule_is_youtube_related(entity_id, &display_name, &pattern);
+        crate::youtube::current_exemption(
+            yt_related,
+            active_details.is_browser,
+            via_foreground && active_details.is_browser,
+        )
+    } else {
+        None
     };
+    if let Some(t) = &yt_exempt_type {
+        crate::youtube::record_exempt_second(t);
+        activity_label = format!("{} • Isento: {}", activity_label, crate::youtube::type_label(t));
+    }
 
     // 3. Atualização de consumo no SQLite
     let (emergency_tokens, leisure_locked_until, consumed_seconds) = {
@@ -892,21 +1010,25 @@ pub fn tick_entity(entity_id: &str) -> Option<TickState> {
         let blocked_now = if is_whitelisted || !is_active_day {
             false
         } else {
-            forced_blocked == 1 || consumed >= daily_quota || is_leisure_locked || is_blocked_by_window
+            forced_blocked == 1 || penalty || consumed >= daily_quota || is_leisure_locked || is_blocked_by_window
         };
 
-        if is_active && !blocked_now {
+        if is_active && !blocked_now && yt_exempt_type.is_none() && !is_whitelisted {
             let mut active_stmt = conn
                 .prepare(
-                    "SELECT interval_id FROM usage_intervals
+                    "SELECT interval_id, ended_at_utc FROM usage_intervals
                      WHERE entity_id = ?1 AND ended_at_utc >= ?2
                      ORDER BY ended_at_utc DESC LIMIT 1",
                 )
                 .ok()?;
 
-            let active_id: Option<String> = active_stmt
-                .query_row((entity_id, now - 3), |row| row.get(0))
+            let active: Option<(String, i64)> = active_stmt
+                .query_row((entity_id, now - 3), |row| Ok((row.get(0)?, row.get(1)?)))
                 .ok();
+            let last_nc = LAST_NONCOUNTED.lock().get(entity_id).copied();
+            let active_id = active
+                .filter(|(_, ended)| should_extend_interval(*ended, now, last_nc))
+                .map(|(id, _)| id);
 
             if let Some(id) = active_id {
                 let _ = conn.execute(
@@ -923,6 +1045,10 @@ pub fn tick_entity(entity_id: &str) -> Option<TickState> {
             }
 
             consumed += 1;
+        } else if is_active {
+            // Active but not counted (exempt, whitelisted, blocked): the next counted tick
+            // must not bridge over this second.
+            LAST_NONCOUNTED.lock().insert(entity_id.to_string(), now);
         }
 
         (emergency_tokens, leisure_locked_until, consumed)
@@ -932,7 +1058,7 @@ pub fn tick_entity(entity_id: &str) -> Option<TickState> {
     let is_blocked = if is_whitelisted || !is_active_day {
         false
     } else {
-        forced_blocked == 1 || consumed_seconds >= daily_quota || is_leisure_locked || is_blocked_by_window
+        forced_blocked == 1 || penalty || consumed_seconds >= daily_quota || is_leisure_locked || is_blocked_by_window
     };
 
     if is_blocked_by_window && is_blocked {
@@ -940,14 +1066,27 @@ pub fn tick_entity(entity_id: &str) -> Option<TickState> {
     }
 
     // 4. Ações ativas de bloqueio quando esgotado ou dentro da janela bloqueada
-    if is_blocked && is_active && !is_whitelisted {
+    if is_blocked && is_active && !is_whitelisted && yt_exempt_type.is_none() {
+        // Shown on the block screen (translated by the app).
+        let block_reason = if forced_blocked == 1 {
+            "forced"
+        } else if penalty {
+            "penalty"
+        } else if is_blocked_by_window {
+            "window"
+        } else if is_leisure_locked {
+            "leisure"
+        } else {
+            "quota"
+        };
+        let windows = ActivityDetector::get_all_windows_info();
         if is_bg_media || target_type == "GROUP" || target_type == "SITE_GROUP" || target_type == "SITE" || target_type == "KEYWORD" {
             ActivityDetector::pause_background_media(entity_id);
         }
         if target_type == "GROUP" {
             let (apps, _) = parse_group_pattern_rich(&pattern);
             for app in apps {
-                enforce_app_target_block(&app, &wl_groups);
+                enforce_app_target_block(&app, &wl_groups, block_reason, &windows);
             }
         } else if target_type == "APP" && entity_id != "youtube" {
             let proc_target = if pattern.is_empty() { entity_id } else { &pattern };
@@ -955,11 +1094,11 @@ pub fn tick_entity(entity_id: &str) -> Option<TickState> {
                 name: display_name.clone(),
                 exec: proc_target.to_string(),
             };
-            enforce_app_target_block(&app, &wl_groups);
+            enforce_app_target_block(&app, &wl_groups, block_reason, &windows);
         }
     }
 
-    let remaining = if is_whitelisted { daily_quota } else { (daily_quota - consumed_seconds).max(0) };
+    let remaining = (daily_quota - consumed_seconds).max(0);
 
     Some(TickState {
         entity_id: entity_id.to_string(),
@@ -969,7 +1108,8 @@ pub fn tick_entity(entity_id: &str) -> Option<TickState> {
         consumed_seconds,
         is_active_now: is_active,
         is_background_playback: is_bg_media,
-        is_blocked: is_blocked || (remaining == 0 && !is_whitelisted && is_active_day),
+        is_blocked: yt_exempt_type.is_none()
+            && (is_blocked || (remaining == 0 && !is_whitelisted && is_active_day)),
         detected_activity_label: activity_label,
         ratchet_locked_until_utc: ratchet_locked_until,
         emergency_tokens_remaining: emergency_tokens,
@@ -988,10 +1128,7 @@ pub struct QuotaUpdateResult {
 }
 
 pub fn update_quota_ratchet(entity_id: &str, new_quota_seconds: i64) -> QuotaUpdateResult {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs() as i64;
+    let now = crate::trusted_time::now_secs();
 
     let (current_quota, locked_until) = {
         let conn = db::get_conn().lock();
@@ -1019,7 +1156,7 @@ pub fn update_quota_ratchet(entity_id: &str, new_quota_seconds: i64) -> QuotaUpd
     if get_anti_cheat_state().is_active && new_quota_seconds > current_quota {
         return QuotaUpdateResult {
             success: false,
-            message: "Modo Anti-Cheat está ativo! Aumentos de cota são estritamente proibidos até a desativação do Anti-Cheat.".to_string(),
+            message: "Modo Anti-Burla está ativo! Aumentos de cota são estritamente proibidos até a desativação do Anti-Burla.".to_string(),
         };
     }
 
@@ -1048,10 +1185,7 @@ pub fn update_quota_ratchet(entity_id: &str, new_quota_seconds: i64) -> QuotaUpd
 
 pub fn activate_ratchet_lock(entity_id: &str, duration_hours: i64) -> bool {
     let conn = db::get_conn().lock();
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs() as i64;
+    let now = crate::trusted_time::now_secs();
 
     let unlock_at = now + (duration_hours * 3600);
 
@@ -1064,10 +1198,7 @@ pub fn activate_ratchet_lock(entity_id: &str, duration_hours: i64) -> bool {
 
 pub fn use_emergency_token(entity_id: &str) -> QuotaUpdateResult {
     let conn = db::get_conn().lock();
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs() as i64;
+    let now = crate::trusted_time::now_secs();
 
     let tokens: i64 = conn
         .query_row(
@@ -1133,10 +1264,8 @@ pub fn get_all_rules() -> Vec<RuleItem> {
 }
 
 pub fn get_all_site_rules_status() -> Vec<SiteStatusItem> {
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs() as i64;
+    let now = crate::trusted_time::now_secs();
+    let penalty = penalty_active(now);
     let day_start = now - (now % 86400);
 
     // 1. Carrega todas as regras e métricas em um único lock rápido e libera o banco imediatamente
@@ -1151,13 +1280,13 @@ pub fn get_all_site_rules_status() -> Vec<SiteStatusItem> {
             .unwrap_or((2, 0));
 
         let dow: i32 = conn
-            .query_row("SELECT CAST(strftime('%w', 'now', 'localtime') AS INTEGER)", [], |r| r.get(0))
+            .query_row("SELECT CAST(strftime('%w', ?1, 'unixepoch', 'localtime') AS INTEGER)", [crate::trusted_time::now_secs()], |r| r.get(0))
             .unwrap_or(1);
 
         let (h, m): (i32, i32) = conn
             .query_row(
-                "SELECT CAST(strftime('%H', 'now', 'localtime') AS INTEGER), CAST(strftime('%M', 'now', 'localtime') AS INTEGER)",
-                [],
+                "SELECT CAST(strftime('%H', ?1, 'unixepoch', 'localtime') AS INTEGER), CAST(strftime('%M', ?1, 'unixepoch', 'localtime') AS INTEGER)",
+                [crate::trusted_time::now_secs()],
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .unwrap_or((12, 0));
@@ -1200,10 +1329,10 @@ pub fn get_all_site_rules_status() -> Vec<SiteStatusItem> {
 
     let mut list = Vec::new();
     for (entity_id, display_name, daily_quota_raw, forced_blocked, target_type, pattern, weekend_quota, schedule_json, consumed) in rules_data {
-        let is_whitelisted = db::is_item_in_whitelist_groups(&wl_groups, &entity_id) || {
-            let (apps, sites) = parse_group_pattern(&pattern);
-            apps.iter().any(|a| db::is_item_in_whitelist_groups(&wl_groups, a)) || sites.iter().any(|s| db::is_item_in_whitelist_groups(&wl_groups, s))
-        };
+        // Only a whitelisted rule as a whole is exempt here; whitelisted individual
+        // sites/apps are allowed per URL (`proxy::is_whitelisted_target`) and per
+        // activity (`tick_entity`), so the rest of the group still blocks.
+        let is_whitelisted = db::is_item_in_whitelist_groups(&wl_groups, &entity_id);
 
         let (is_active_day, is_blocked_by_window) =
             evaluate_schedule_window(schedule_json.as_deref(), cur_h, cur_m, day_of_week);
@@ -1213,11 +1342,12 @@ pub fn get_all_site_rules_status() -> Vec<SiteStatusItem> {
         } else {
             daily_quota_raw
         };
+        let (daily_quota, _) = crate::holidays::apply_holiday_quota(&entity_id, daily_quota);
 
         let is_blocked = if is_whitelisted || !is_active_day {
             false
         } else {
-            forced_blocked || consumed >= daily_quota || is_leisure_locked || is_blocked_by_window
+            forced_blocked || penalty || consumed >= daily_quota || is_leisure_locked || is_blocked_by_window
         };
         let remaining = if is_whitelisted { daily_quota } else { (daily_quota - consumed).max(0) };
 
@@ -1249,23 +1379,46 @@ pub fn save_rule(
     schedule_json: Option<&str>,
 ) -> Result<(), String> {
     if get_anti_cheat_state().is_active {
+        // Anti-cheat: an existing rule/group can only be renamed (new rules are allowed).
         let conn = db::get_conn().lock();
-        let existing_quota: Option<i64> = conn
-            .query_row("SELECT daily_quota_seconds FROM rules WHERE entity_id = ?1", [entity_id], |r| r.get(0))
+        let existing: Option<(i64, String, String, String, Option<i64>, Option<String>)> = conn
+            .query_row(
+                "SELECT daily_quota_seconds, COALESCE(mode, ''), COALESCE(target_type, ''), COALESCE(pattern, ''), weekend_quota_seconds, schedule_json FROM rules WHERE entity_id = ?1",
+                [entity_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
+            )
             .ok();
         drop(conn);
-        if let Some(old_quota) = existing_quota {
-            if daily_quota_seconds > old_quota {
-                return Err("Modo Anti-Cheat está ativo! Aumentos de cota são estritamente proibidos até a desativação do Anti-Cheat.".to_string());
+        if let Some((q, m, t, p, w, sch)) = existing {
+            let unchanged = q == daily_quota_seconds
+                && m == mode
+                && t == target_type
+                && same_json_text(&p, pattern)
+                && w.unwrap_or(0) == weekend_quota_seconds.unwrap_or(0)
+                && same_json_text(sch.as_deref().unwrap_or(""), schedule_json.unwrap_or(""));
+            if !unchanged {
+                return Err("Modo Anti-Burla ativo! Só é possível renomear grupos até o Anti-Burla ser desativado.".to_string());
             }
         }
     }
 
+    // YouTube stage 3: refuse changes that create a conflict (whitelist x block, ...).
+    {
+        let before = crate::conflicts::load_current();
+        let mut after = before.clone();
+        after.rules.retain(|r| r.id != entity_id);
+        after.rules.push(crate::conflicts::RuleIn {
+            id: entity_id.to_string(),
+            name: display_name.to_string(),
+            target_type: target_type.to_string(),
+            pattern: pattern.to_string(),
+            schedule_json: schedule_json.map(str::to_string),
+        });
+        crate::conflicts::check_new(&before, &after)?;
+    }
+
     let conn = db::get_conn().lock();
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs() as i64;
+    let now = crate::trusted_time::now_secs();
 
     conn.execute(
         "INSERT INTO rules (entity_id, display_name, daily_quota_seconds, mode, target_type, pattern, weekend_quota_seconds, schedule_json, updated_at_utc)
@@ -1288,9 +1441,21 @@ pub fn save_rule(
     Ok(())
 }
 
+/// Equal as JSON when both parse (key order / spacing ignored), else as trimmed text.
+pub(crate) fn same_json_text(a: &str, b: &str) -> bool {
+    let (a, b) = (a.trim(), b.trim());
+    if a == b {
+        return true;
+    }
+    match (serde_json::from_str::<serde_json::Value>(a), serde_json::from_str::<serde_json::Value>(b)) {
+        (Ok(x), Ok(y)) => x == y,
+        _ => false,
+    }
+}
+
 pub fn delete_rule(entity_id: &str) -> Result<(), String> {
     if get_anti_cheat_state().is_active {
-        return Err("Modo Anti-Cheat está ativo! Regras de bloqueio não podem ser removidas.".to_string());
+        return Err("Modo Anti-Burla está ativo! Regras de bloqueio não podem ser removidas.".to_string());
     }
 
     let conn = db::get_conn().lock();
@@ -1305,7 +1470,7 @@ pub fn delete_rule(entity_id: &str) -> Result<(), String> {
 
 pub fn toggle_entity_block(entity_id: &str, blocked: bool) -> Result<(), String> {
     if !blocked && get_anti_cheat_state().is_active {
-        return Err("Modo Anti-Cheat está ativo! O desbloqueio total é estritamente proibido até o Anti-Cheat ser destravado.".to_string());
+        return Err("Modo Anti-Burla está ativo! O desbloqueio total é estritamente proibido até o Anti-Burla ser destravado.".to_string());
     }
 
     let conn = db::get_conn().lock();
@@ -1361,17 +1526,20 @@ pub fn scan_system_untrusted_processes() -> Vec<QuarantineItem> {
     drop(detector);
 
     let conn = db::get_conn().lock();
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs() as i64;
+    let now = crate::trusted_time::now_secs();
+    dedupe_quarantine(&conn);
+    let known: std::collections::HashSet<String> = quarantine_rows(&conn).into_iter().map(|(_, key, _)| key).collect();
 
-    for (name, path) in untrusted_processes {
-        let req_id = format!("quar_{}_{}", name, now);
+    for (name, key) in untrusted_processes {
+        // A program already reviewed (or waiting) is never listed again.
+        if known.contains(&key) {
+            continue;
+        }
+        let req_id = format!("quar_{:016x}", fnv1a(&key));
         let _ = conn.execute(
             "INSERT OR IGNORE INTO install_quarantine (request_id, app_identifier, display_name, platform, status, requested_at_utc)
              VALUES (?1, ?2, ?3, 'linux', 'QUARANTINED', ?4)",
-            (&req_id, &path, &name, now),
+            (&req_id, &key, &name, now),
         );
     }
 
@@ -1379,12 +1547,282 @@ pub fn scan_system_untrusted_processes() -> Vec<QuarantineItem> {
     get_quarantine_items()
 }
 
+fn fnv1a(s: &str) -> u64 {
+    s.bytes().fold(0xcbf29ce484222325u64, |h, b| (h ^ b as u64).wrapping_mul(0x100000001b3))
+}
+
+/// (request_id, normalized key, status) of every quarantine row.
+fn quarantine_rows(conn: &rusqlite::Connection) -> Vec<(String, String, String)> {
+    let Ok(mut stmt) = conn.prepare("SELECT request_id, app_identifier, status FROM install_quarantine") else {
+        return Vec::new();
+    };
+    stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)))
+        .map(|rows| {
+            rows.filter_map(Result::ok)
+                .map(|(id, path, st)| (id, crate::detector::quarantine_key(&path), st))
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Old scans stored one row per scan: keep one row per program (the reviewed one wins).
+fn dedupe_quarantine(conn: &rusqlite::Connection) {
+    let mut rows = quarantine_rows(conn);
+    // Reviewed rows first, so they are the ones kept.
+    rows.sort_by_key(|(_, _, st)| if st == "QUARANTINED" { 1 } else { 0 });
+    let mut seen = std::collections::HashSet::new();
+    for (id, key, _) in rows {
+        if !seen.insert(key) {
+            let _ = conn.execute("DELETE FROM install_quarantine WHERE request_id = ?1", [&id]);
+        }
+    }
+}
+
+/// Rejected programs (parental quarantine) are closed whenever they start.
+pub fn enforce_rejected_quarantine() {
+    let keys: std::collections::HashSet<String> = {
+        let conn = db::get_conn().lock();
+        quarantine_rows(&conn)
+            .into_iter()
+            .filter(|(_, _, st)| st == "REJECTED")
+            .map(|(_, key, _)| key)
+            .collect()
+    };
+    if keys.is_empty() {
+        return;
+    }
+    for name in get_detector().lock().kill_by_quarantine_keys(&keys) {
+        eprintln!("chronos quarantine: closed rejected program {name}");
+    }
+}
+
 // ------------------ DETECÇÃO AUTOMÁTICA & ANTI-CHEAT ------------------
+
+/// Last second each entity was active but not counted (see [`should_extend_interval`]).
+static LAST_NONCOUNTED: std::sync::LazyLock<Mutex<std::collections::HashMap<String, i64>>> =
+    std::sync::LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
+
+/// A counted tick extends the latest usage interval only when it ended at most 3 s ago
+/// (tick jitter) and no uncounted (exempt/whitelisted) second happened since then;
+/// otherwise a new interval starts, so exempt gaps are never charged.
+pub(crate) fn should_extend_interval(last_ended: i64, now: i64, last_noncounted: Option<i64>) -> bool {
+    last_ended >= now - 3 && !matches!(last_noncounted, Some(nc) if nc >= last_ended && nc <= now)
+}
+
+/// True when the entity's usage was extended within the last 2 seconds (time is running).
+pub fn is_entity_counting(entity_id: &str) -> bool {
+    let Some(conn) = db::try_get_conn() else { return false };
+    let conn = conn.lock();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    conn.query_row(
+        "SELECT COALESCE(MAX(ended_at_utc), 0) FROM usage_intervals WHERE entity_id = ?1",
+        [entity_id],
+        |r| r.get::<_, i64>(0),
+    )
+    .map(|last| last >= now - 2)
+    .unwrap_or(false)
+}
 
 static LAST_ACTIVE_ENTITY: parking_lot::Mutex<Option<String>> = parking_lot::Mutex::new(None);
 
 pub const STAYFOCUSD_CHALLENGE_TEXT: &str =
     "Eu reconheço plenamente que alterar meus limites agora é uma tentativa de ceder à procrastinação. Meus objetivos a longo prazo dependem da minha disciplina e consistência diária. Eu escolho manter o foco e cumprir minhas metas acima de qualquer distração passageira.";
+
+/// Built-in challenge texts (one is drawn each time the challenge mode is activated).
+pub const BUILTIN_CHALLENGE_TEXTS: [&str; 4] = [
+    STAYFOCUSD_CHALLENGE_TEXT,
+    "Eu sei que a vontade de liberar agora vai passar em poucos minutos. Cada vez que eu resisto, fica mais fácil resistir de novo. Eu prefiro o orgulho de ter cumprido o meu plano do que o alívio rápido de uma distração que eu mesmo decidi evitar.",
+    "Os limites que eu configurei foram escolhidos com a cabeça fria, pensando no meu futuro. Desfazer esses limites num momento de impulso seria trair a pessoa que eu quero ser. Eu vou respirar fundo, voltar para a minha tarefa e terminar o que comecei.",
+    "Tempo é o recurso mais valioso que eu tenho e não volta. Se eu liberar agora, vou trocar horas de progresso por alguns minutos de distração. Eu reconheço esse impulso, aceito que ele existe e mesmo assim escolho manter o meu compromisso com o foco.",
+];
+pub const MIN_CUSTOM_CHALLENGE_LEN: usize = 120;
+const CUSTOM_CHALLENGES_KEY: &str = "anti_cheat_custom_texts";
+const CURRENT_CHALLENGE_KEY: &str = "anti_cheat_current_text";
+
+const STRENGTH_CHECK_KEY: &str = "challenge_strength_check";
+
+/// Optional check that refuses custom challenge texts that are too easy to type (on by
+/// default).
+pub fn challenge_strength_check_enabled() -> bool {
+    db::get_config(STRENGTH_CHECK_KEY).map_or(true, |v| v != "0")
+}
+
+pub fn set_challenge_strength_check(enabled: bool) -> Result<(), String> {
+    if get_anti_cheat_state().is_active {
+        return Err("Anti-Burla ativo: os textos do desafio não podem ser alterados agora.".to_string());
+    }
+    db::set_config(STRENGTH_CHECK_KEY, if enabled { "1" } else { "0" }).map_err(|e| e.to_string())
+}
+
+/// Why a challenge text is too easy to type (empty = fine). Messages are Portuguese
+/// sources translated by `i18n::tr_msg`.
+pub fn challenge_text_issues(text: &str) -> Vec<String> {
+    let t = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut issues = Vec::new();
+    let chars = t.chars().count();
+    if chars < MIN_CUSTOM_CHALLENGE_LEN {
+        issues.push(format!("Curto demais: {chars} de {MIN_CUSTOM_CHALLENGE_LEN} caracteres."));
+    }
+    let lower = t.to_lowercase();
+    let words: Vec<&str> = lower
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .collect();
+    if words.len() < 20 {
+        issues.push("Poucas palavras: escreva frases (pelo menos 20 palavras).".to_string());
+    }
+    if words.len() >= 10 {
+        let unique: std::collections::HashSet<&&str> = words.iter().collect();
+        if (unique.len() as f32) < words.len() as f32 * 0.5 {
+            issues.push("Muitas palavras repetidas.".to_string());
+        }
+        let mut counts: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+        for w in &words {
+            *counts.entry(w).or_default() += 1;
+        }
+        if counts.values().any(|&c| c * 4 > words.len() && c > 3) {
+            issues.push("Uma palavra se repete demais.".to_string());
+        }
+    }
+    let letters: std::collections::HashSet<char> = lower.chars().filter(|c| c.is_alphabetic()).collect();
+    if letters.len() < 12 {
+        issues.push("Poucas letras diferentes.".to_string());
+    }
+    // "aaaaa", "!!!!!"
+    let mut run = 1;
+    let mut prev = None;
+    let mut long_run = false;
+    for c in lower.chars().filter(|c| !c.is_whitespace()) {
+        if Some(c) == prev {
+            run += 1;
+            long_run |= run >= 4;
+        } else {
+            run = 1;
+        }
+        prev = Some(c);
+    }
+    if long_run {
+        issues.push("Letras repetidas em sequência.".to_string());
+    }
+    // A short block copied over and over ("abc abc abc ...").
+    let compact: Vec<char> = lower.chars().filter(|c| !c.is_whitespace()).collect();
+    if compact.len() >= 12 {
+        let n = compact.len();
+        let mut pi = vec![0usize; n];
+        for i in 1..n {
+            let mut k = pi[i - 1];
+            while k > 0 && compact[i] != compact[k] {
+                k = pi[k - 1];
+            }
+            if compact[i] == compact[k] {
+                k += 1;
+            }
+            pi[i] = k;
+        }
+        if pi[n - 1] * 3 >= n * 2 {
+            issues.push("O texto é um mesmo trecho repetido.".to_string());
+        }
+    }
+    let squeezed: String = compact.iter().collect();
+    if ["qwert", "asdfg", "zxcvb", "12345", "abcdef", "poiuy", "lkjhg"].iter().any(|p| squeezed.contains(p)) {
+        issues.push("Sequência de teclado (qwerty, asdf, 12345…).".to_string());
+    }
+    issues
+}
+
+pub fn custom_challenge_texts() -> Vec<String> {
+    db::get_config(CUSTOM_CHALLENGES_KEY)
+        .and_then(|raw| serde_json::from_str::<Vec<String>>(&raw).ok())
+        .unwrap_or_default()
+}
+
+/// Saves the user's own challenge texts (each at least [`MIN_CUSTOM_CHALLENGE_LEN`]
+/// characters). Refused while anti-cheat is active.
+pub fn set_custom_challenge_texts(texts: Vec<String>) -> Result<(), String> {
+    if get_anti_cheat_state().is_active {
+        return Err("Anti-Burla ativo: os textos do desafio não podem ser alterados agora.".to_string());
+    }
+    let mut clean: Vec<String> = Vec::new();
+    for t in texts {
+        let t = t.split_whitespace().collect::<Vec<_>>().join(" ");
+        if t.is_empty() {
+            continue;
+        }
+        if t.chars().count() < MIN_CUSTOM_CHALLENGE_LEN {
+            return Err(format!(
+                "Cada texto precisa ter pelo menos {MIN_CUSTOM_CHALLENGE_LEN} caracteres (\"{}…\" é curto demais).",
+                t.chars().take(30).collect::<String>()
+            ));
+        }
+        if challenge_strength_check_enabled() {
+            if let Some(first) = challenge_text_issues(&t).into_iter().next() {
+                return Err(format!(
+                    "Texto fácil demais (\"{}…\"): {first}",
+                    t.chars().take(30).collect::<String>()
+                ));
+            }
+        }
+        if !clean.contains(&t) {
+            clean.push(t);
+        }
+    }
+    db::set_config(CUSTOM_CHALLENGES_KEY, &serde_json::to_string(&clean).map_err(|e| e.to_string())?)
+        .map_err(|e| e.to_string())
+}
+
+/// Text the user must type to leave challenge mode (drawn at activation).
+pub fn current_challenge_text() -> String {
+    db::get_config(CURRENT_CHALLENGE_KEY)
+        .filter(|t| !t.trim().is_empty())
+        .unwrap_or_else(|| STAYFOCUSD_CHALLENGE_TEXT.to_string())
+}
+
+/// The user's own texts replace the built-in ones; without them, the built-ins are used
+/// (`custom` = JSON list stored in app_config).
+pub fn challenge_pool(custom_json: &str) -> Vec<String> {
+    let custom: Vec<String> = serde_json::from_str::<Vec<String>>(custom_json)
+        .unwrap_or_default()
+        .into_iter()
+        .filter(|t| t.chars().count() >= MIN_CUSTOM_CHALLENGE_LEN)
+        .collect();
+    if custom.is_empty() {
+        BUILTIN_CHALLENGE_TEXTS.iter().map(|t| t.to_string()).collect()
+    } else {
+        custom
+    }
+}
+
+fn draw_challenge_text_except(current: &str) -> String {
+    let pool = challenge_pool(&db::get_config(CUSTOM_CHALLENGES_KEY).unwrap_or_default());
+    let candidates: Vec<&String> = pool.iter().filter(|t| t.trim() != current.trim()).collect();
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos() as usize)
+        .unwrap_or(0);
+    if candidates.is_empty() {
+        return pool[nanos % pool.len()].clone();
+    }
+    candidates[nanos % candidates.len()].clone()
+}
+
+fn draw_challenge_text() -> String {
+    draw_challenge_text_except("")
+}
+
+/// Draws a different challenge text (called whenever the challenge dialog is closed).
+pub fn redraw_challenge_text() -> Result<(), String> {
+    let state = get_anti_cheat_state();
+    if !state.is_active || state.mode != "CHALLENGE" {
+        return Ok(());
+    }
+    let next = draw_challenge_text_except(&state.challenge_text);
+    db::set_config(CURRENT_CHALLENGE_KEY, &next).map_err(|e| e.to_string())?;
+    let _ = db::bump_state_revision();
+    Ok(())
+}
 
 #[derive(Clone, Debug)]
 pub struct AntiCheatStateItem {
@@ -1396,7 +1834,7 @@ pub struct AntiCheatStateItem {
 
 pub fn get_anti_cheat_state() -> AntiCheatStateItem {
     let mode = db::get_config("anti_cheat_mode").unwrap_or_else(|| "OFF".to_string());
-    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs() as i64;
+    let now = crate::trusted_time::now_secs();
     let nuke_until = db::get_config("anti_cheat_nuke_until_utc").and_then(|s| s.parse::<i64>().ok()).unwrap_or(0);
 
     let is_active = if mode == "NUKE" {
@@ -1415,18 +1853,19 @@ pub fn get_anti_cheat_state() -> AntiCheatStateItem {
         is_active,
         mode: if is_active { mode } else { "OFF".to_string() },
         nuke_remaining_seconds: remaining,
-        challenge_text: STAYFOCUSD_CHALLENGE_TEXT.to_string(),
+        challenge_text: current_challenge_text(),
     }
 }
 
 pub fn enable_anti_cheat(mode: &str, nuke_seconds: Option<i64>) -> Result<(), String> {
-    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs() as i64;
+    let now = crate::trusted_time::now_secs();
     if mode == "NUKE" {
         let duration = nuke_seconds.unwrap_or(3600 * 4); // Default 4h
         let until = now + duration;
         db::set_config("anti_cheat_mode", "NUKE").map_err(|e| e.to_string())?;
         db::set_config("anti_cheat_nuke_until_utc", &until.to_string()).map_err(|e| e.to_string())?;
     } else {
+        db::set_config(CURRENT_CHALLENGE_KEY, &draw_challenge_text()).map_err(|e| e.to_string())?;
         db::set_config("anti_cheat_mode", "CHALLENGE").map_err(|e| e.to_string())?;
         db::set_config("anti_cheat_nuke_until_utc", "0").map_err(|e| e.to_string())?;
     }
@@ -1448,16 +1887,50 @@ pub fn disable_anti_cheat(verification_token: &str) -> Result<(), String> {
         ));
     }
 
-    let clean_expected = STAYFOCUSD_CHALLENGE_TEXT.trim();
+    let expected = current_challenge_text();
     let clean_received = verification_token.trim();
-    if clean_received != clean_expected {
+    // The challenge is shown in the app language: any version of the text is accepted.
+    if !crate::i18n::variants(&expected).iter().any(|v| v.trim() == clean_received) {
         return Err("Texto do desafio incorreto. O desafio exige digitação com 100% de precisão sem erros.".to_string());
     }
 
+    // With the root vault installed, only the vault can turn anti-cheat off (editing the
+    // database alone is reverted), so it verifies the challenge text too.
+    if crate::vault::read_published_state().is_some() {
+        unlock_through_vault(clean_received)?;
+    }
     db::set_config("anti_cheat_mode", "OFF").map_err(|e| e.to_string())?;
     db::set_config("anti_cheat_nuke_until_utc", "0").map_err(|e| e.to_string())?;
     let _ = db::bump_state_revision();
     Ok(())
+}
+
+pub const VAULT_BINARY: &str = "/usr/local/lib/chronos/chronos_vault";
+
+fn unlock_through_vault(text: &str) -> Result<(), String> {
+    use std::io::Write;
+    if !std::path::Path::new(VAULT_BINARY).exists() {
+        return Ok(());
+    }
+    let db_path = db::get_conn().lock().path().map(str::to_string).unwrap_or_default();
+    let user = crate::vault::current_user();
+    let mut child = std::process::Command::new("pkexec")
+        .args([VAULT_BINARY, "unlock", "--user", &user, "--db", &db_path])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("Falha ao falar com o cofre do Chronos: {e}"))?;
+    if let Some(mut stdin) = child.stdin.take() {
+        let _ = stdin.write_all(text.as_bytes());
+    }
+    let out = child.wait_with_output().map_err(|e| e.to_string())?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        Err(if err.is_empty() { "O cofre do Chronos recusou o desbloqueio.".to_string() } else { err })
+    }
 }
 
 pub fn debug_disable_anti_cheat() -> Result<(), String> {
@@ -1495,8 +1968,8 @@ pub fn tick_auto() -> Option<TickState> {
         let conn = db::get_conn().lock();
         let (dow, h, m): (i32, i32, i32) = conn
             .query_row(
-                "SELECT CAST(strftime('%w', 'now', 'localtime') AS INTEGER), CAST(strftime('%H', 'now', 'localtime') AS INTEGER), CAST(strftime('%M', 'now', 'localtime') AS INTEGER)",
-                [],
+                "SELECT CAST(strftime('%w', ?1, 'unixepoch', 'localtime') AS INTEGER), CAST(strftime('%H', ?1, 'unixepoch', 'localtime') AS INTEGER), CAST(strftime('%M', ?1, 'unixepoch', 'localtime') AS INTEGER)",
+                [crate::trusted_time::now_secs()],
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
             )
             .unwrap_or((1, 12, 0));
@@ -1727,6 +2200,71 @@ pub fn tick_auto() -> Option<TickState> {
 mod tests {
     use super::*;
     use crate::detector::{ActiveWindowDetails, WindowInfo};
+
+    #[test]
+    fn challenge_text_pool_custom_texts_and_anti_cheat_lock() {
+        let _lock = crate::tests::TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let db_file = format!("/tmp/chronos_challenge_{}.db", std::process::id());
+        let _ = std::fs::remove_file(&db_file);
+        db::init_db(&db_file).expect("init temp db");
+
+        assert!(set_custom_challenge_texts(vec!["curto".into()]).is_err(), "too short");
+        // Strength check (on by default) refuses easy texts.
+        assert!(set_custom_challenge_texts(vec!["x".repeat(MIN_CUSTOM_CHALLENGE_LEN)]).is_err(), "easy text refused");
+        assert!(!challenge_text_issues(&"abc def ".repeat(30)).is_empty());
+        assert!(!challenge_text_issues(&format!("{} asdfgh", BUILTIN_CHALLENGE_TEXTS[1])).is_empty());
+        for t in BUILTIN_CHALLENGE_TEXTS {
+            assert!(challenge_text_issues(t).is_empty(), "built-in text passes: {:?}", challenge_text_issues(t));
+        }
+        set_challenge_strength_check(false).unwrap();
+        let mine = "x".repeat(MIN_CUSTOM_CHALLENGE_LEN);
+        set_custom_challenge_texts(vec![mine.clone(), "  ".into(), mine.clone()]).unwrap();
+        assert_eq!(custom_challenge_texts(), vec![mine.clone()]);
+
+        // Custom texts replace the built-in ones.
+        let mine2 = "y".repeat(MIN_CUSTOM_CHALLENGE_LEN);
+        set_custom_challenge_texts(vec![mine.clone(), mine2.clone()]).unwrap();
+        assert_eq!(challenge_pool(&serde_json::to_string(&[&mine, &mine2]).unwrap()), vec![mine.clone(), mine2.clone()]);
+        assert_eq!(challenge_pool("[]").len(), BUILTIN_CHALLENGE_TEXTS.len(), "no custom texts: built-ins");
+
+        enable_anti_cheat("CHALLENGE", None).unwrap();
+        let first = current_challenge_text();
+        assert!(first == mine || first == mine2, "only custom texts are drawn");
+        redraw_challenge_text().unwrap();
+        assert_ne!(current_challenge_text(), first, "closing the challenge draws another text");
+        let drawn = current_challenge_text();
+        assert!(drawn == mine || drawn == mine2);
+        assert_eq!(get_anti_cheat_state().challenge_text, drawn);
+        assert!(set_custom_challenge_texts(vec![]).is_err(), "locked while active");
+
+        // Anti-cheat: existing rule can only be renamed
+        let pat = r#"{"apps":[{"name":"A","exec":"a"}],"sites":[]}"#;
+        save_rule("g1", "Grupo", 600, "QUOTA", "GROUP", pat, None, None).unwrap(); // new rule ok
+        save_rule("g1", "Novo nome", 600, "QUOTA", "GROUP", r#"{"sites":[],"apps":[{"exec":"a","name":"A"}]}"#, None, None)
+            .expect("rename (same pattern, other key order)");
+        assert!(save_rule("g1", "Novo nome", 300, "QUOTA", "GROUP", pat, None, None).is_err(), "quota locked");
+        assert!(save_rule("g1", "Novo nome", 600, "QUOTA", "GROUP", r#"{"apps":[],"sites":[]}"#, None, None).is_err(), "items locked");
+        assert!(save_rule("g1", "Novo nome", 600, "QUOTA", "GROUP", pat, None, Some(r#"{"x":1}"#)).is_err(), "schedule locked");
+        assert!(disable_anti_cheat("errado").is_err());
+        disable_anti_cheat(&drawn).unwrap();
+        assert!(!get_anti_cheat_state().is_active);
+
+        let _ = std::fs::remove_file(db_file);
+    }
+
+    #[test]
+    fn exempt_gap_is_not_bridged_by_next_counted_tick() {
+        // counted until 100, next counted at 101: extend
+        assert!(should_extend_interval(100, 101, None));
+        // jitter: one skipped second still extends
+        assert!(should_extend_interval(100, 102, None));
+        // exempt at 101, counted again at 102: new interval (101 not charged)
+        assert!(!should_extend_interval(100, 102, Some(101)));
+        // old exempt second before the interval end does not matter
+        assert!(should_extend_interval(100, 101, Some(90)));
+        // stale interval
+        assert!(!should_extend_interval(100, 105, None));
+    }
 
     #[test]
     fn normalize_desktop_exec_preserves_steam_game_uri() {

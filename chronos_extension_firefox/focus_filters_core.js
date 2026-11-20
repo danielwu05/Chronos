@@ -60,6 +60,17 @@
         ? !!f.rd_block_comments
         : false;
 
+    const rdBlockNsfw = hasOwn(f, "rdBlockNsfw")
+      ? !!f.rdBlockNsfw
+      : hasOwn(f, "rd_block_nsfw")
+        ? !!f.rd_block_nsfw
+        : false;
+    const twBlockSensitive = hasOwn(f, "twBlockSensitive")
+      ? !!f.twBlockSensitive
+      : hasOwn(f, "tw_block_sensitive")
+        ? !!f.tw_block_sensitive
+        : false;
+
     const twBlockFeed = hasOwn(f, "twBlockFeed")
       ? !!f.twBlockFeed
       : hasOwn(f, "tw_block_feed")
@@ -129,19 +140,33 @@
         : [];
     const launcherBlockedNames = normalizeTermList(rawNames);
 
+    const rawShowOnly = hasOwn(f, "ytShowOnlyTypes")
+      ? f.ytShowOnlyTypes
+      : hasOwn(f, "yt_show_only_types")
+        ? f.yt_show_only_types
+        : [];
+    const ytShowOnlyTypes = normalizeTermList(rawShowOnly).map((t) => t.toLowerCase());
+    const ytShowOnlyEnabled =
+      ytShowOnlyTypes.length > 0 &&
+      (hasOwn(f, "ytShowOnlyEnabled") ? !!f.ytShowOnlyEnabled : !!f.yt_show_only_enabled);
+
     return {
       ytBlockShorts,
       ytEducationalMode,
       ytBlockSidebar,
       ytBlockComments,
+      ytShowOnlyEnabled,
+      ytShowOnlyTypes,
       igBlockReels,
       igBlockFeed,
       igBlockComments,
       ttBlockFeed,
       rdBlockFeed,
       rdBlockComments,
+      rdBlockNsfw,
       twBlockFeed,
       twBlockTrends,
+      twBlockSensitive,
       liBlockFeed,
       globalGrayscale,
       globalBlockNotifications,
@@ -237,6 +262,24 @@ yt-chip-cloud-chip-renderer:has([title="Shorts"]),
 ytd-shorts,
 #shorts-container,
 a[href^="/shorts"] {
+  display: none !important;
+}
+`;
+      }
+
+      if (filters.ytShowOnlyEnabled) {
+        // "Mostrar apenas": feed/related cards start hidden and are revealed one by one
+        // (data-chronos-yt-ok="1") once their video type is known to be allowed.
+        css += `
+ytd-browse[page-subtype="home"] ytd-rich-item-renderer:not([data-chronos-yt-ok="1"]),
+ytd-browse[page-subtype="subscriptions"] ytd-rich-item-renderer:not([data-chronos-yt-ok="1"]),
+ytd-browse[page-subtype="home"] ytd-rich-section-renderer,
+ytd-watch-next-secondary-results-renderer ytd-compact-video-renderer:not([data-chronos-yt-ok="1"]),
+ytd-watch-next-secondary-results-renderer yt-lockup-view-model:not([data-chronos-yt-ok="1"]),
+ytd-watch-next-secondary-results-renderer ytd-reel-shelf-renderer,
+.ytp-endscreen-content,
+.ytp-ce-element,
+.ytp-videowall-still {
   display: none !important;
 }
 `;
@@ -339,6 +382,18 @@ main div[data-e2e*="video-feed"] {
 
     // 5. Reddit
     if (host.includes("reddit.com")) {
+      if (filters.rdBlockNsfw) {
+        // NSFW (+18) posts in feeds, search and old reddit (blurred cards included).
+        css += `
+shreddit-post[nsfw],
+article:has(shreddit-post[nsfw]),
+shreddit-blurred-container[reason="nsfw"],
+.thing.over18,
+[data-chronos-nsfw="1"] {
+  display: none !important;
+}
+`;
+      }
       if (filters.rdBlockFeed) {
         css += `
 shreddit-feed,
@@ -367,6 +422,13 @@ comment-body-header {
 
     // 6. Twitter / X
     if (host.includes("twitter.com") || host.includes("x.com")) {
+      if (filters.twBlockSensitive) {
+        css += `
+[data-chronos-nsfw="1"] {
+  display: none !important;
+}
+`;
+      }
       if (filters.twBlockFeed) {
         css += `
 [data-testid="primaryColumn"] section[aria-label*="Timeline" i],
@@ -1570,7 +1632,331 @@ faceplate-tracker[noun="notifications"] .badge-count,
     };
   }
 
+  /**
+   * YouTube "mostrar apenas": reveals feed/related cards whose video type is allowed,
+   * keeps the rest hidden (CSS hides unmarked cards), and skips disallowed Shorts.
+   * opts: { document, location, classifyItems(items, done), skipShort() }
+   */
+  function createYoutubeTypeFilter() {
+    const cache = new Map(); // videoId -> { types: [], known: bool, at: ms }
+    const inflight = new Set();
+    const RETRY_UNKNOWN_MS = 20000;
+    const CARD_SELECTOR = [
+      'ytd-browse[page-subtype="home"] ytd-rich-item-renderer',
+      'ytd-browse[page-subtype="subscriptions"] ytd-rich-item-renderer',
+      "ytd-watch-next-secondary-results-renderer ytd-compact-video-renderer",
+      "ytd-watch-next-secondary-results-renderer yt-lockup-view-model",
+    ].join(", ");
+    let skippedShortId = "";
+
+    function videoIdFromHref(href) {
+      const h = String(href || "");
+      const m = h.match(/[?&]v=([A-Za-z0-9_-]{11})/) || h.match(/\/shorts\/([A-Za-z0-9_-]{11})/);
+      return m ? m[1] : "";
+    }
+
+    function cardVideoId(el) {
+      if (!el || !el.querySelector) return "";
+      const a = el.querySelector('a[href*="watch?v="], a[href*="/shorts/"]');
+      return a ? videoIdFromHref(a.getAttribute("href")) : "";
+    }
+
+    function isAllowed(entry, allowed) {
+      return !!entry && entry.known && entry.types.some((t) => allowed.has(String(t).toLowerCase()));
+    }
+
+    function fresh(entry) {
+      return entry && (entry.known || Date.now() - entry.at < RETRY_UNKNOWN_MS);
+    }
+
+    function request(ids, opts, rerun) {
+      const pending = ids.filter((id) => !inflight.has(id) && !fresh(cache.get(id))).slice(0, 40);
+      if (!pending.length || typeof opts.classifyItems !== "function") return;
+      pending.forEach((id) => inflight.add(id));
+      opts.classifyItems(
+        pending.map((id) => ({ id, videoId: id })),
+        (resp) => {
+          pending.forEach((id) => inflight.delete(id));
+          const results = resp && Array.isArray(resp.results) ? resp.results : [];
+          for (const r of results) {
+            cache.set(r.id, { types: Array.isArray(r.types) ? r.types : [], known: !!r.known, at: Date.now() });
+          }
+          for (const id of pending) {
+            if (!cache.has(id)) cache.set(id, { types: [], known: false, at: Date.now() });
+          }
+          rerun();
+        }
+      );
+    }
+
+    function apply(rawFilters, opts) {
+      const filters = normalizeFilters(rawFilters);
+      const doc = opts && opts.document;
+      const loc = opts && opts.location;
+      if (!doc || !loc || !filters.ytShowOnlyEnabled) return;
+      const host = String(loc.hostname || "").toLowerCase();
+      if (!host.includes("youtube.com")) return;
+      const allowed = new Set(filters.ytShowOnlyTypes);
+      const rerun = () => apply(rawFilters, opts);
+
+      // Feed / related cards
+      const unknown = [];
+      for (const el of doc.querySelectorAll ? doc.querySelectorAll(CARD_SELECTOR) : []) {
+        const id = cardVideoId(el);
+        if (!id) continue;
+        const entry = cache.get(id);
+        if (isAllowed(entry, allowed)) {
+          if (el.getAttribute("data-chronos-yt-ok") !== "1") el.setAttribute("data-chronos-yt-ok", "1");
+        } else {
+          if (el.getAttribute("data-chronos-yt-ok") === "1") el.removeAttribute("data-chronos-yt-ok");
+          if (!fresh(entry)) unknown.push(id);
+        }
+      }
+      if (unknown.length) request(unknown, opts, rerun);
+
+      // Shorts: skip disallowed ones (only when Shorts are not blocked entirely)
+      const path = String(loc.pathname || "");
+      const m = path.match(/^\/shorts\/([A-Za-z0-9_-]{11})/);
+      if (m && !filters.ytBlockShorts) {
+        const id = m[1];
+        const entry = cache.get(id);
+        if (!fresh(entry)) {
+          request([id], opts, rerun);
+        } else if (!isAllowed(entry, allowed) && skippedShortId !== id) {
+          skippedShortId = id;
+          if (typeof opts.skipShort === "function") opts.skipShort();
+        }
+      }
+    }
+
+    return { apply, videoIdFromHref, _cache: cache };
+  }
+
+  /**
+   * +18 content on Reddit and X: hides flagged posts (marks them with
+   * data-chronos-nsfw="1", hidden by buildFocusCss) and reports pages that are adult
+   * as a whole (NSFW subreddit/post, sensitive X profile) so the caller can block them.
+   */
+  const X_SENSITIVE_RE =
+    /(content warning|aviso de conte[uú]do|potentially sensitive|potencialmente sens[ií]vel|conte[uú]do sens[ií]vel|sensitive content|m[ií]dia sens[ií]vel|sensitive media)/i;
+  const X_SENSITIVE_PROFILE_RE =
+    /(may include potentially sensitive content|pode incluir conte[uú]do potencialmente sens[ií]vel|this profile may include|este perfil pode incluir)/i;
+  const X_SENSITIVE_COMMUNITY_RE =
+    /(this community (may contain|contains) (potentially )?sensitive|nsfw community|comunidade (pode conter|cont[eé]m) conte[uú]do (potencialmente )?sens[ií]vel|adult content|conte[uú]do adulto)/i;
+  const REDDIT_GATE_RE =
+    /(mature content|you must be (at least )?18|over 18|maiores de 18|conte[uú]do adulto|voc[eê] tem 18 anos|confirm(e)? (que )?(voc[eê] )?tem 18)/i;
+
+  function markHidden(el) {
+    if (el && el.getAttribute && el.getAttribute("data-chronos-nsfw") !== "1") {
+      el.setAttribute("data-chronos-nsfw", "1");
+    }
+  }
+
+  // signals (optional): { tweets: Set<id>, users: Set<lowercase handle> } reported by
+  // x_sensitive_hook.js from X's own API data (possibly_sensitive flags).
+  function scanAdultSocial(rawFilters, hostInput, pathInput, doc, signals) {
+    const sigTweets = signals && signals.tweets ? signals.tweets : null;
+    const sigUsers = signals && signals.users ? signals.users : null;
+    const sigCommunities = signals && signals.communities ? signals.communities : null;
+    const filters = normalizeFilters(rawFilters);
+    const host = String(hostInput || "").toLowerCase();
+    const path = String(pathInput || "/");
+    if (!doc || !doc.querySelectorAll) return null;
+
+    if (host.includes("reddit.com") && filters.rdBlockNsfw) {
+      if (path.startsWith("/over18")) return "Subreddit +18 bloqueado pelo Chronos";
+      // Search/feed units flagged with an "NSFW" badge.
+      doc.querySelectorAll("[data-testid='search-post-unit'], faceplate-tracker, search-telemetry-tracker, .Post").forEach((unit) => {
+        if (unit.getAttribute("data-chronos-nsfw") === "1") return;
+        const badges = unit.querySelectorAll("span, faceplate-tag, .nsfw-stamp, [data-testid='nsfw-badge']");
+        for (const b of badges) {
+          if ((b.textContent || "").trim().toUpperCase() === "NSFW") {
+            markHidden(unit);
+            break;
+          }
+        }
+      });
+      const isPost = /\/comments\//.test(path);
+      if (isPost) {
+        const main = doc.querySelector("shreddit-post");
+        if (main && main.hasAttribute("nsfw")) return "Post +18 bloqueado pelo Chronos";
+        if (doc.querySelector(".thing.over18.link, #siteTable .over18")) return "Post +18 bloqueado pelo Chronos";
+      }
+      const isSub = /^\/r\/[^/]+\/?$/.test(path) || /^\/r\/[^/]+\/(hot|new|top|rising)\/?/.test(path);
+      if (isSub || isPost) {
+        if (doc.querySelector("shreddit-async-loader[bundlename*='nsfw' i], xpromo-nsfw-blocking-container, nsfw-blocking-modal, [data-testid='nsfw-blocking-modal']")) {
+          return "Subreddit +18 bloqueado pelo Chronos";
+        }
+        const gate = doc.querySelector("[role='dialog'], dialog, .interstitial");
+        if (gate && REDDIT_GATE_RE.test(gate.textContent || "")) return "Subreddit +18 bloqueado pelo Chronos";
+        const posts = doc.querySelectorAll("shreddit-post");
+        if (isSub && posts.length >= 4) {
+          let nsfw = 0;
+          posts.forEach((p) => {
+            if (p.hasAttribute("nsfw")) nsfw += 1;
+          });
+          if (nsfw / posts.length >= 0.6) return "Subreddit +18 bloqueado pelo Chronos";
+        }
+      }
+    }
+
+    if ((host.includes("twitter.com") || host === "x.com" || host.endsWith(".x.com")) && filters.twBlockSensitive) {
+      doc.querySelectorAll("article[data-testid='tweet'], article").forEach((art) => {
+        if (art.getAttribute("data-chronos-nsfw") === "1") return;
+        let flagged = X_SENSITIVE_RE.test(art.textContent || "");
+        if (!flagged && (sigTweets || sigUsers) && art.querySelectorAll) {
+          for (const a of art.querySelectorAll("a[href]")) {
+            const href = a.getAttribute("href") || "";
+            const cm = href.match(/^\/i\/communities\/(\d+)/);
+            if (cm && sigCommunities && sigCommunities.has(cm[1])) {
+              flagged = true;
+              break;
+            }
+            const m = href.match(/^\/([A-Za-z0-9_]{1,15})(?:\/status\/(\d+))?/);
+            if (!m) continue;
+            if (m[2] && sigTweets && sigTweets.has(m[2])) flagged = true;
+            if (!m[2] && sigUsers && sigUsers.has(m[1].toLowerCase())) flagged = true;
+            if (m[2] && sigUsers && sigUsers.has(m[1].toLowerCase())) flagged = true;
+            if (flagged) break;
+          }
+        }
+        if (flagged) {
+          const cell = art.closest ? art.closest("[data-testid='cellInnerDiv']") : null;
+          markHidden(cell || art);
+        }
+      });
+      const primary = doc.querySelector("[data-testid='primaryColumn']") || doc.body;
+      const segs = path.split("/").filter(Boolean);
+      // Community pages: /i/communities/<id>
+      if (segs[0] === "i" && segs[1] === "communities" && /^\d+$/.test(segs[2] || "")) {
+        if (sigCommunities && sigCommunities.has(segs[2])) return "Comunidade +18 bloqueada pelo Chronos";
+        if (primary && X_SENSITIVE_COMMUNITY_RE.test(primary.textContent || "")) {
+          return "Comunidade +18 bloqueada pelo Chronos";
+        }
+      }
+      const reserved = ["home", "explore", "search", "notifications", "messages", "i", "settings", "compose"];
+      if (segs.length >= 1 && !reserved.includes(segs[0].toLowerCase())) {
+        const handle = segs[0].toLowerCase();
+        if (sigUsers && sigUsers.has(handle)) return "Perfil +18 bloqueado pelo Chronos";
+        if (segs[1] === "status" && segs[2] && sigTweets && sigTweets.has(segs[2])) return "Post +18 bloqueado pelo Chronos";
+        if (primary && X_SENSITIVE_PROFILE_RE.test(primary.textContent || "")) return "Perfil +18 bloqueado pelo Chronos";
+      }
+    }
+    return null;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Local image AI (+18): decision rules + page-side blur/scan.
+
+  const NSFW_MIN_SIDE = 96;
+
+  function isNsfwVerdict(p) {
+    if (!p) return false;
+    return (p.porn || 0) >= 0.6 || (p.hentai || 0) >= 0.6 || (p.sexy || 0) >= 0.85;
+  }
+
+  function shouldBlockImagePage(nsfwCount, analyzedCount) {
+    return nsfwCount >= 4 || (analyzedCount >= 4 && nsfwCount / analyzedCount > 0.5);
+  }
+
+  function hostInAllowlist(host, allowlist) {
+    const h = String(host || "").toLowerCase().replace(/^www\./, "");
+    return (allowlist || []).some((a) => {
+      const x = String(a || "").toLowerCase().replace(/^www\./, "");
+      return x && (h === x || h.endsWith("." + x));
+    });
+  }
+
+  /**
+   * Blurs every big-enough <img> until it is classified; +18 ones stay blurred.
+   * opts: { document, location, classify(url) -> Promise<{nsfw:boolean}|null>, onBlockPage(reason) }
+   */
+  function createImageNsfwFilter() {
+    let page = "";
+    let nsfw = 0;
+    let analyzed = 0;
+    let reported = false;
+    const STYLE_ID = "chronos-nsfw-style";
+
+    function removeStyle(doc) {
+      const el = doc.getElementById && doc.getElementById(STYLE_ID);
+      if (el && el.parentNode) el.parentNode.removeChild(el);
+    }
+
+    function ensureStyle(doc) {
+      if (!doc.getElementById || doc.getElementById(STYLE_ID)) return;
+      const st = doc.createElement("style");
+      st.id = STYLE_ID;
+      st.textContent =
+        'img[data-chronos-img="pending"],img[data-chronos-img="nsfw"]{filter:blur(24px)!important;}';
+      (doc.head || doc.documentElement).appendChild(st);
+    }
+
+    function apply(cfg, opts) {
+      const doc = opts && opts.document;
+      if (!doc || !doc.querySelectorAll) return;
+      const loc = opts.location || {};
+      const host = String(loc.hostname || "").toLowerCase();
+      const off =
+        !cfg ||
+        !cfg.imageAi ||
+        host === "127.0.0.1" ||
+        host === "localhost" ||
+        hostInAllowlist(host, cfg.allowlist);
+      if (off) {
+        removeStyle(doc);
+        doc.querySelectorAll('img[data-chronos-img="pending"]').forEach((img) => img.setAttribute("data-chronos-img", "ok"));
+        return;
+      }
+      if (loc.href !== page) {
+        page = loc.href;
+        nsfw = 0;
+        analyzed = 0;
+        reported = false;
+      }
+      ensureStyle(doc);
+      doc.querySelectorAll("img").forEach((img) => {
+        const src = img.currentSrc || img.src || "";
+        if (!src || /^(blob:|chrome|moz-extension:|about:)/i.test(src)) return;
+        if (img.getAttribute("data-chronos-src") === src) return;
+        const wAttr = parseInt(img.getAttribute("width") || "0", 10);
+        const hAttr = parseInt(img.getAttribute("height") || "0", 10);
+        const loadedSmall =
+          img.complete && img.naturalWidth > 0 && (img.naturalWidth < NSFW_MIN_SIDE || img.naturalHeight < NSFW_MIN_SIDE);
+        const declaredSmall = wAttr > 0 && hAttr > 0 && (wAttr < NSFW_MIN_SIDE || hAttr < NSFW_MIN_SIDE);
+        img.setAttribute("data-chronos-src", src);
+        if (loadedSmall || declaredSmall || /\.svg(\?|$)/i.test(src)) {
+          img.setAttribute("data-chronos-img", "ok");
+          return;
+        }
+        img.setAttribute("data-chronos-img", "pending");
+        const pageAtStart = page;
+        Promise.resolve(opts.classify(src))
+          .then((res) => {
+            if (img.getAttribute("data-chronos-src") !== src) return;
+            const isNsfw = !!(res && res.nsfw);
+            img.setAttribute("data-chronos-img", isNsfw ? "nsfw" : "ok");
+            if (pageAtStart !== page || !res || res.skipped) return;
+            analyzed += 1;
+            if (isNsfw) nsfw += 1;
+            if (!reported && shouldBlockImagePage(nsfw, analyzed) && typeof opts.onBlockPage === "function") {
+              reported = true;
+              opts.onBlockPage("Imagens +18 bloqueadas pelo Chronos");
+            }
+          })
+          .catch(() => {
+            if (img.getAttribute("data-chronos-src") === src) img.setAttribute("data-chronos-img", "ok");
+          });
+      });
+    }
+
+    return { apply, _counts: () => ({ nsfw, analyzed }) };
+  }
+
+  const imageNsfwFilter = createImageNsfwFilter();
+
   const launcherDomFilter = createLauncherDomFilter();
+  const youtubeTypeFilter = createYoutubeTypeFilter();
 
   globalScope.ChronosFocusCore = {
     normalizeFilters,
@@ -1581,8 +1967,17 @@ faceplate-tracker[noun="notifications"] .badge-count,
     normalizeTermList,
     launcherDomFilter,
     createLauncherDomFilter,
+    youtubeTypeFilter,
+    createYoutubeTypeFilter,
+    scanAdultSocial,
+    isNsfwVerdict,
+    shouldBlockImagePage,
+    hostInAllowlist,
+    createImageNsfwFilter,
+    imageNsfwFilter,
   };
   globalScope.ChronosLauncherDomFilter = launcherDomFilter;
+  globalScope.ChronosYoutubeTypeFilter = youtubeTypeFilter;
 
   if (typeof module !== "undefined" && module.exports) {
     module.exports = globalScope.ChronosFocusCore;

@@ -6,7 +6,8 @@
   "browser_specific_settings": {
     "gecko": {
       "id": "chronos-focus@chronos.local",
-      "strict_min_version": "109.0"
+      "strict_min_version": "109.0",
+      "update_url": "https://127.0.0.1:4547/extension/firefox-updates.json"
     }
   },
   "permissions": [
@@ -19,17 +20,30 @@
     "http://localhost/*"
   ],
   "background": {
-    "scripts": ["focus_filters_core.js", "background.js"]
+    "scripts": [
+      "focus_filters_core.js",
+      "background.js"
+    ]
   },
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
-      "js": ["focus_filters_core.js", "focus_hud_panel.js", "content.js"],
+      "matches": [
+        "<all_urls>"
+      ],
+      "js": [
+        "focus_filters_core.js",
+        "i18n.js",
+        "focus_hud_panel.js",
+        "content.js"
+      ],
       "run_at": "document_start"
     }
   ],
   "browser_action": {
     "default_title": "Chronos Focus Engine",
     "default_popup": "popup.html"
-  }
+  },
+  "web_accessible_resources": [
+    "x_sensitive_hook.js"
+  ]
 }

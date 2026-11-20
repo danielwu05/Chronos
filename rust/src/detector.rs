@@ -36,6 +36,42 @@ pub fn extract_binary_basename(exec_or_name: &str) -> String {
     base.to_lowercase()
 }
 
+/// A process is the app only when its name or executable basename IS the target binary
+/// (text in arguments never matches: `grep youtube`, `nvim youtube.rs`, test runners…).
+/// `comm` names are truncated to 15 chars by the kernel.
+pub fn process_identity_matches(clean_target: &str, proc_name: &str, proc_exe: &str) -> bool {
+    if clean_target.is_empty() {
+        return false;
+    }
+    let truncated: String = clean_target.chars().take(15).collect();
+    let name_ok = proc_name == clean_target || (clean_target.chars().count() > 15 && proc_name == truncated);
+    let exe_base = std::path::Path::new(proc_exe)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("");
+    name_ok || (!exe_base.is_empty() && exe_base == clean_target)
+}
+
+/// Whether a process is the target app: `Some(true)` by its own name / executable,
+/// `Some(false)` through a wrapper (interpreter command line, systemd scope, AppImage,
+/// renamed copy; see [`crate::wrappers`]), `None` otherwise.
+fn process_matches_target(process: &sysinfo::Process, clean_target: &str, raw_target: &str) -> Option<bool> {
+    let proc_name = process.name().to_string_lossy().to_lowercase();
+    let proc_exe_raw = process.exe().map(|p| p.to_string_lossy().to_string()).unwrap_or_default();
+    if process_identity_matches(clean_target, &proc_name, &proc_exe_raw.to_lowercase()) {
+        return Some(true);
+    }
+    let pid = process.pid().as_u32();
+    if pid == std::process::id() || proc_name.starts_with("chronos") || clean_target.is_empty() {
+        return None;
+    }
+    let tokens = crate::wrappers::process_tokens(pid, process.start_time(), &proc_name, &proc_exe_raw);
+    if crate::wrappers::tokens_match(raw_target, &tokens) || crate::wrappers::is_renamed_copy(raw_target, &proc_exe_raw) {
+        return Some(false);
+    }
+    None
+}
+
 pub fn is_generic_launcher_token(token: &str) -> bool {
     matches!(
         token.trim().to_lowercase().as_str(),
@@ -322,6 +358,45 @@ fn normalize_game_match_text(input: &str) -> String {
     out.trim().to_string()
 }
 
+fn is_untrusted_location(path: &str) -> bool {
+    let lower = path.to_lowercase();
+    lower.starts_with("/tmp")
+        || lower.starts_with("/dev/shm")
+        || lower.contains("/downloads/")
+        || lower.contains("/.cache/")
+}
+
+/// Stable identity of a program path: folder names that look random (AppImage mounts
+/// `.mount_AbC123`, temp dirs, hashes) become `*`; the file name is kept.
+pub fn quarantine_key(path: &str) -> String {
+    let parts: Vec<&str> = path.split('/').collect();
+    let last = parts.len().saturating_sub(1);
+    parts
+        .iter()
+        .enumerate()
+        .map(|(i, seg)| {
+            if i == last || seg.is_empty() {
+                return seg.to_string();
+            }
+            let core = seg.trim_start_matches('.');
+            let prefix_random = ["mount_", "tmp", "_MEI", "org.chromium."]
+                .iter()
+                .find_map(|p| core.strip_prefix(p))
+                .is_some_and(|rest| rest.len() >= 4);
+            let has_digit = core.chars().any(|c| c.is_ascii_digit());
+            let has_alpha = core.chars().any(|c| c.is_ascii_alphabetic());
+            let hexish = core.len() >= 8 && core.chars().all(|c| c.is_ascii_hexdigit() || c == '-');
+            let mixed = core.len() >= 6 && has_digit && has_alpha && !core.contains(['.', ' ']);
+            if prefix_random || hexish || mixed {
+                "*".to_string()
+            } else {
+                seg.to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct WindowInfo {
     pub address: String,
@@ -359,7 +434,10 @@ impl WindowInfo {
             }
         }
 
-        if !t.is_empty() {
+        // Browser windows: the title is the page title ("youtube - Pesquisa Google"), so it
+        // never identifies an app; browser tabs are matched by their domain instead
+        // (engine::evaluate_app_target_activity).
+        if !t.is_empty() && !self.is_browser() {
             if t == n || (!base_n.is_empty() && t.contains(&base_n)) || (!base_e.is_empty() && t.contains(&base_e)) {
                 return true;
             }
@@ -371,6 +449,21 @@ impl WindowInfo {
             }
         }
         false
+    }
+
+    /// Host of the focused browser tab reported by the extension (fresh only).
+    pub fn active_browser_tab_host() -> Option<String> {
+        let text = std::fs::read_to_string("/tmp/chronos_active_tab.json").ok()?;
+        let v: serde_json::Value = serde_json::from_str(&text).ok()?;
+        let ts = v.get("timestamp_ms").and_then(|t| t.as_i64()).unwrap_or(0);
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_millis() as i64;
+        if (now - ts).abs() > crate::youtube::ACTIVE_TAB_FRESH_MS {
+            return None;
+        }
+        let url = v.get("url").and_then(|u| u.as_str())?.to_lowercase();
+        let rest = url.split_once("://").map_or(url.as_str(), |(_, r)| r);
+        let host = rest.split(['/', '?', '#', ':']).next().unwrap_or("").trim_start_matches("www.").to_string();
+        (!host.is_empty()).then_some(host)
     }
 
     pub fn is_browser(&self) -> bool {
@@ -522,7 +615,7 @@ pub struct ActivityDetector {
 impl ActivityDetector {
     pub fn new() -> Self {
         let mut system = System::new();
-        system.refresh_processes(ProcessesToUpdate::All, false);
+        system.refresh_processes(ProcessesToUpdate::All, true);
         Self { system }
     }
 
@@ -530,7 +623,7 @@ impl ActivityDetector {
         if app_id <= 0 {
             return false;
         }
-        self.system.refresh_processes(ProcessesToUpdate::All, false);
+        self.system.refresh_processes(ProcessesToUpdate::All, true);
         self.system.processes().values().any(|process| {
             let proc_cmd = process
                 .cmd()
@@ -549,7 +642,7 @@ impl ActivityDetector {
     }
 
     pub fn kill_steam_appid_processes(&mut self, app_id: i64, game_name: &str) -> usize {
-        self.system.refresh_processes(ProcessesToUpdate::All, false);
+        self.system.refresh_processes(ProcessesToUpdate::All, true);
         let norm_game = normalize_game_match_text(game_name);
         let compact_game: String = norm_game.chars().filter(|ch| !ch.is_whitespace()).collect();
         let mut killed = 0;
@@ -602,38 +695,59 @@ impl ActivityDetector {
     }
 
     pub fn is_process_running(&mut self, target_name: &str) -> bool {
-        self.system.refresh_processes(ProcessesToUpdate::All, false);
+        self.system.refresh_processes(ProcessesToUpdate::All, true);
         let clean_target = extract_binary_basename(target_name);
-        let raw_target = target_name.trim().to_lowercase();
 
-        self.system.processes().values().any(|process| {
-            let proc_name = process.name().to_string_lossy().to_lowercase();
-            let proc_exe = process.exe().map(|p| p.to_string_lossy().to_lowercase()).unwrap_or_default();
-            let proc_cmd = process.cmd().iter().map(|s| s.to_string_lossy().to_lowercase()).collect::<Vec<_>>().join(" ");
+        self.system
+            .processes()
+            .values()
+            .any(|process| process_matches_target(process, &clean_target, target_name).is_some())
+    }
 
-            (!clean_target.is_empty() && (proc_name.contains(&clean_target) || clean_target.contains(&proc_name) || proc_exe.contains(&clean_target) || proc_cmd.contains(&clean_target)))
-                || (!raw_target.is_empty() && (proc_name.contains(&raw_target) || raw_target.contains(&proc_name) || proc_exe.contains(&raw_target) || proc_cmd.contains(&raw_target)))
-        })
+    /// Kills a process and all its descendants (used for the window of a blocked app,
+    /// whatever wrapper started it).
+    pub fn kill_pid_tree(&mut self, root: u32) -> usize {
+        if root <= 1 || root == std::process::id() {
+            return 0;
+        }
+        self.system.refresh_processes(ProcessesToUpdate::All, true);
+        let procs = self.system.processes();
+        let mut tree = vec![root];
+        let mut i = 0;
+        while i < tree.len() {
+            let parent = tree[i];
+            for (pid, p) in procs {
+                if p.parent().map(|pp| pp.as_u32()) == Some(parent) && !tree.contains(&pid.as_u32()) {
+                    tree.push(pid.as_u32());
+                }
+            }
+            i += 1;
+        }
+        tree.iter()
+            .rev()
+            .filter(|pid| **pid != std::process::id())
+            .filter_map(|pid| procs.get(&sysinfo::Pid::from_u32(*pid)))
+            .filter(|p| p.kill())
+            .count()
     }
 
     pub fn kill_processes(&mut self, target_name: &str) -> usize {
-        self.system.refresh_processes(ProcessesToUpdate::All, false);
+        self.system.refresh_processes(ProcessesToUpdate::All, true);
         let clean_target = extract_binary_basename(target_name);
-        let raw_target = target_name.trim().to_lowercase();
         let mut killed = 0;
 
         for process in self.system.processes().values() {
-            let proc_name = process.name().to_string_lossy().to_lowercase();
-            let proc_exe = process.exe().map(|p| p.to_string_lossy().to_lowercase()).unwrap_or_default();
-            let proc_cmd = process.cmd().iter().map(|s| s.to_string_lossy().to_lowercase()).collect::<Vec<_>>().join(" ");
-
-            let matches = (!clean_target.is_empty() && (proc_name.contains(&clean_target) || clean_target.contains(&proc_name) || proc_exe.contains(&clean_target) || proc_cmd.contains(&clean_target)))
-                || (!raw_target.is_empty() && (proc_name.contains(&raw_target) || raw_target.contains(&proc_name) || proc_exe.contains(&raw_target) || proc_cmd.contains(&raw_target)));
-
-            if matches {
-                if process.kill() {
-                    killed += 1;
+            let Some(by_name) = process_matches_target(process, &clean_target, target_name) else {
+                continue;
+            };
+            if by_name {
+                // Remember the real executable: renamed copies are recognized later.
+                if let Some(exe) = process.exe() {
+                    crate::wrappers::learn_blocked_executable(target_name, &exe.to_string_lossy());
                 }
+            }
+            if process.kill() {
+                killed += 1;
             }
         }
 
@@ -645,29 +759,53 @@ impl ActivityDetector {
         killed
     }
 
+    /// (name, stable key) of running programs from temporary / download folders.
+    /// The key is [`quarantine_key`]: random folder names are replaced by `*`, so an
+    /// AppImage re-mounted at a new /tmp/.mount_XXXX keeps the same identity.
     pub fn find_untrusted_processes(&mut self) -> Vec<(String, String)> {
-        self.system.refresh_processes(ProcessesToUpdate::All, false);
-        let mut list = Vec::new();
+        self.system.refresh_processes(ProcessesToUpdate::All, true);
+        let own_dir = std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.to_path_buf()));
+        let mut list: Vec<(String, String)> = Vec::new();
 
         for process in self.system.processes().values() {
-            if let Some(exe_path) = process.exe() {
-                let path_str = exe_path.to_string_lossy().to_string();
-                let lower = path_str.to_lowercase();
-
-                let is_suspect = lower.starts_with("/tmp")
-                    || lower.starts_with("/dev/shm")
-                    || lower.contains("/downloads/")
-                    || lower.contains("/.cache/");
-
-                if is_suspect {
-                    let name = process.name().to_string_lossy().to_string();
-                    if !list.iter().any(|(n, _)| n == &name) {
-                        list.push((name, path_str));
-                    }
-                }
+            let Some(exe_path) = process.exe() else { continue };
+            if own_dir.as_ref().is_some_and(|d| exe_path.starts_with(d)) {
+                continue; // Chronos itself (dev builds live under ~/Downloads)
+            }
+            let path_str = exe_path.to_string_lossy().to_string();
+            if !is_untrusted_location(&path_str) {
+                continue;
+            }
+            let name = process.name().to_string_lossy().to_string();
+            if name.to_lowercase().starts_with("chronos") {
+                continue;
+            }
+            let key = quarantine_key(&path_str);
+            if !list.iter().any(|(_, k)| k == &key) {
+                list.push((name, key));
             }
         }
         list
+    }
+
+    /// Kills every process whose [`quarantine_key`] is in `keys`; returns their names.
+    pub fn kill_by_quarantine_keys(&mut self, keys: &std::collections::HashSet<String>) -> Vec<String> {
+        if keys.is_empty() {
+            return Vec::new();
+        }
+        self.system.refresh_processes(ProcessesToUpdate::All, true);
+        let mut killed = Vec::new();
+        for process in self.system.processes().values() {
+            let Some(exe) = process.exe() else { continue };
+            let path = exe.to_string_lossy();
+            if !is_untrusted_location(&path) || !keys.contains(&quarantine_key(&path)) {
+                continue;
+            }
+            if process.kill() {
+                killed.push(process.name().to_string_lossy().to_string());
+            }
+        }
+        killed
     }
 
     pub fn get_active_window_details() -> ActiveWindowDetails {
@@ -919,7 +1057,7 @@ impl ActivityDetector {
         if let Ok(content) = std::fs::read_to_string("/tmp/chronos_active_tab.json") {
             if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
                 let ts = json.get("timestamp_ms").and_then(|v| v.as_i64()).unwrap_or(0);
-                if (now_ms - ts).abs() <= 3500 {
+                if (now_ms - ts).abs() <= crate::youtube::ACTIVE_TAB_FRESH_MS {
                     let url = json
                         .get("url")
                         .and_then(|v| v.as_str())
@@ -1167,8 +1305,8 @@ impl ActivityDetector {
         // 1. Verifica se a extensão web detectou uma aba emitindo áudio em segundo plano ou primeiro plano
         if let Ok(content) = std::fs::read_to_string("/tmp/chronos_active_tab.json") {
             if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
-                let ts = json.get("timestamp_ms").and_then(|v| v.as_i64()).unwrap_or(0);
-                if (now_ms - ts).abs() <= 3500 {
+                let ts = json.get("audible_timestamp_ms").or_else(|| json.get("timestamp_ms")).and_then(|v| v.as_i64()).unwrap_or(0);
+                if (now_ms - ts).abs() <= crate::youtube::AUDIBLE_TAB_FRESH_MS {
                     let a_url = json.get("audible_url").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
                     let a_title = json.get("audible_title").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
                     if !a_url.is_empty() || !a_title.is_empty() {
@@ -1229,8 +1367,8 @@ impl ActivityDetector {
             let mut ext_audible_contexts = Vec::new();
             if let Ok(content) = std::fs::read_to_string("/tmp/chronos_active_tab.json") {
                 if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
-                    let ts = json.get("timestamp_ms").and_then(|v| v.as_i64()).unwrap_or(0);
-                    if (now_ms - ts).abs() <= 3500 {
+                    let ts = json.get("audible_timestamp_ms").and_then(|v| v.as_i64()).unwrap_or(0).max(json.get("timestamp_ms").and_then(|v| v.as_i64()).unwrap_or(0));
+                    if (now_ms - ts).abs() <= crate::youtube::AUDIBLE_TAB_FRESH_MS {
                         for key in &["audible_url", "audible_title", "url", "title"] {
                             if let Some(val) = json.get(*key).and_then(|v| v.as_str()) {
                                 let lower = val.trim().to_lowercase();
@@ -1478,6 +1616,50 @@ impl ActivityDetector {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn quarantine_key_is_stable_across_random_dirs() {
+        use super::quarantine_key;
+        assert_eq!(
+            quarantine_key("/tmp/.mount_Obsid4xK9q/obsidian"),
+            quarantine_key("/tmp/.mount_ObsidZZ7a1b/obsidian")
+        );
+        assert_eq!(quarantine_key("/tmp/tmpa8f3k2x9/run.bin"), quarantine_key("/tmp/tmpq0q0q0q0/run.bin"));
+        assert_eq!(
+            quarantine_key("/home/u/Downloads/game-v1.2/Game.x86_64"),
+            "/home/u/Downloads/game-v1.2/Game.x86_64"
+        );
+        assert_ne!(quarantine_key("/tmp/a/one"), quarantine_key("/tmp/a/two"));
+    }
+
+    #[test]
+    fn browser_titles_do_not_match_apps() {
+        use super::WindowInfo;
+        let w = |class: &str, title: &str| WindowInfo {
+            class: class.into(),
+            initial_class: class.into(),
+            title: title.into(),
+            ..Default::default()
+        };
+        assert!(!w("google-chrome", "youtube - Pesquisa Google").matches_app("Youtube", "youtube"));
+        assert!(!w("firefox", "YouTube - Mozilla Firefox").matches_app("Youtube", "youtube"));
+        assert!(w("chrome-youtube.com__-Default", "YouTube").matches_app("Youtube", "youtube"), "web-app by class");
+        assert!(w("youtube-music", "Youtube Music").matches_app("Youtube Music", "youtube-music"));
+        assert!(w("org.gnome.Nautilus", "youtube - Files").matches_app("Youtube", "youtube"), "non-browser titles still count");
+    }
+
+    #[test]
+    fn process_identity_ignores_arguments() {
+        use super::process_identity_matches as m;
+        assert!(m("youtube", "youtube", "/usr/bin/youtube"));
+        assert!(!m("youtube", "nvim", "/usr/bin/nvim"), "editing youtube.rs is not YouTube");
+        assert!(!m("youtube", "node", "/usr/bin/node"));
+        assert!(!m("steam", "steamwebhelper", "/home/u/.steam/steamwebhelper"));
+        assert!(m("discord", "discord", "/opt/discord/discord"));
+        assert!(m("heroicgameslauncher", "heroicgameslaun", "/opt/Heroic/heroic"));
+        assert!(m("code", "electron", "/usr/bin/code"), "exe basename counts");
+        assert!(!m("", "anything", "/x"));
+    }
+
     use super::*;
 
     #[test]

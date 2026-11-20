@@ -8,7 +8,7 @@ import '../frb_generated.dart';
 import 'package:flutter_rust_bridge/flutter_rust_bridge_for_generated.dart';
 
 // These functions are ignored because they are not marked as `pub`: `resolve_steam_lang_pair`, `trigger_daemon_nudge`
-// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
+// These function are ignored because they are on traits that is not defined in current crate (put an empty `#[frb]` on it to unignore): `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `clone`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`, `fmt`
 
 Future<EngineStatus> getEngineStatus() =>
     RustLib.instance.api.crateApiSimpleGetEngineStatus();
@@ -135,6 +135,11 @@ Future<ActionFeedback> toggleEntityBlock({
 Future<List<QuarantineItemDto>> getQuarantineItems() =>
     RustLib.instance.api.crateApiSimpleGetQuarantineItems();
 
+/// Tells the Rust side which profile this app build runs as (dev builds use separate
+/// ports/data and never touch system integrations). Call right after `RustLib.init`.
+void setChronosProfile({required bool dev}) =>
+    RustLib.instance.api.crateApiSimpleSetChronosProfile(dev: dev);
+
 Future<ActionFeedback> debugDisableAntiCheat() =>
     RustLib.instance.api.crateApiSimpleDebugDisableAntiCheat();
 
@@ -235,6 +240,39 @@ Future<ActionFeedback> configureLauncherStoreProxy({required bool enable}) =>
       enable: enable,
     );
 
+/// User's own anti-cheat challenge texts (drawn together with the built-in ones).
+List<String> getCustomChallengeTexts() =>
+    RustLib.instance.api.crateApiSimpleGetCustomChallengeTexts();
+
+/// Saves the user's challenge texts; refused while anti-cheat is active.
+Future<ActionFeedback> setCustomChallengeTexts({required List<String> texts}) =>
+    RustLib.instance.api.crateApiSimpleSetCustomChallengeTexts(texts: texts);
+
+/// Reasons a challenge text is too easy to type (empty = fine), translated.
+List<String> analyzeChallengeText({required String text}) =>
+    RustLib.instance.api.crateApiSimpleAnalyzeChallengeText(text: text);
+
+/// Whether custom challenge texts must pass the "too easy" check (default on).
+bool getChallengeStrengthCheck() =>
+    RustLib.instance.api.crateApiSimpleGetChallengeStrengthCheck();
+
+Future<ActionFeedback> setChallengeStrengthCheck({required bool enabled}) =>
+    RustLib.instance.api.crateApiSimpleSetChallengeStrengthCheck(
+      enabled: enabled,
+    );
+
+/// Draws another challenge text (the challenge dialog calls this when it closes).
+Future<ActionFeedback> redrawChallengeText() =>
+    RustLib.instance.api.crateApiSimpleRedrawChallengeText();
+
+/// Existing conflicts between block groups, whitelists and YouTube "show only".
+List<ConflictDto> getConflicts() =>
+    RustLib.instance.api.crateApiSimpleGetConflicts();
+
+/// Extension version reported live by each browser (more reliable than profile files).
+List<ExtensionReportDto> getExtensionReports() =>
+    RustLib.instance.api.crateApiSimpleGetExtensionReports();
+
 class ActionFeedback {
   final bool success;
   final String message;
@@ -331,6 +369,24 @@ class AntiCheatStateDto {
           challengeText == other.challengeText;
 }
 
+class ConflictDto {
+  final String kind;
+  final String message;
+
+  const ConflictDto({required this.kind, required this.message});
+
+  @override
+  int get hashCode => kind.hashCode ^ message.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ConflictDto &&
+          runtimeType == other.runtimeType &&
+          kind == other.kind &&
+          message == other.message;
+}
+
 class DailyUsageDto {
   final String dayLabel;
   final String dateStr;
@@ -420,6 +476,33 @@ class EngineStatus {
           currentTimestampUtc == other.currentTimestampUtc;
 }
 
+class ExtensionReportDto {
+  /// chrome, chromium, brave, edge, opera, vivaldi or firefox
+  final String browser;
+  final String version;
+
+  /// Seconds since the extension last reported (it reports every few seconds while open).
+  final PlatformInt64 ageSeconds;
+
+  const ExtensionReportDto({
+    required this.browser,
+    required this.version,
+    required this.ageSeconds,
+  });
+
+  @override
+  int get hashCode => browser.hashCode ^ version.hashCode ^ ageSeconds.hashCode;
+
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      other is ExtensionReportDto &&
+          runtimeType == other.runtimeType &&
+          browser == other.browser &&
+          version == other.version &&
+          ageSeconds == other.ageSeconds;
+}
+
 class FocusFiltersDto {
   final bool blockShorts;
   final bool grayscaleMode;
@@ -431,14 +514,18 @@ class FocusFiltersDto {
   final bool ytEducationalMode;
   final bool ytBlockSidebar;
   final bool ytBlockComments;
+  final bool ytShowOnlyEnabled;
+  final List<String> ytShowOnlyTypes;
   final bool igBlockReels;
   final bool igBlockFeed;
   final bool igBlockComments;
   final bool ttBlockFeed;
   final bool rdBlockFeed;
   final bool rdBlockComments;
+  final bool rdBlockNsfw;
   final bool twBlockFeed;
   final bool twBlockTrends;
+  final bool twBlockSensitive;
   final bool liBlockFeed;
   final bool globalGrayscale;
   final bool globalBlockNotifications;
@@ -460,14 +547,18 @@ class FocusFiltersDto {
     required this.ytEducationalMode,
     required this.ytBlockSidebar,
     required this.ytBlockComments,
+    required this.ytShowOnlyEnabled,
+    required this.ytShowOnlyTypes,
     required this.igBlockReels,
     required this.igBlockFeed,
     required this.igBlockComments,
     required this.ttBlockFeed,
     required this.rdBlockFeed,
     required this.rdBlockComments,
+    required this.rdBlockNsfw,
     required this.twBlockFeed,
     required this.twBlockTrends,
+    required this.twBlockSensitive,
     required this.liBlockFeed,
     required this.globalGrayscale,
     required this.globalBlockNotifications,
@@ -491,14 +582,18 @@ class FocusFiltersDto {
       ytEducationalMode.hashCode ^
       ytBlockSidebar.hashCode ^
       ytBlockComments.hashCode ^
+      ytShowOnlyEnabled.hashCode ^
+      ytShowOnlyTypes.hashCode ^
       igBlockReels.hashCode ^
       igBlockFeed.hashCode ^
       igBlockComments.hashCode ^
       ttBlockFeed.hashCode ^
       rdBlockFeed.hashCode ^
       rdBlockComments.hashCode ^
+      rdBlockNsfw.hashCode ^
       twBlockFeed.hashCode ^
       twBlockTrends.hashCode ^
+      twBlockSensitive.hashCode ^
       liBlockFeed.hashCode ^
       globalGrayscale.hashCode ^
       globalBlockNotifications.hashCode ^
@@ -524,14 +619,18 @@ class FocusFiltersDto {
           ytEducationalMode == other.ytEducationalMode &&
           ytBlockSidebar == other.ytBlockSidebar &&
           ytBlockComments == other.ytBlockComments &&
+          ytShowOnlyEnabled == other.ytShowOnlyEnabled &&
+          ytShowOnlyTypes == other.ytShowOnlyTypes &&
           igBlockReels == other.igBlockReels &&
           igBlockFeed == other.igBlockFeed &&
           igBlockComments == other.igBlockComments &&
           ttBlockFeed == other.ttBlockFeed &&
           rdBlockFeed == other.rdBlockFeed &&
           rdBlockComments == other.rdBlockComments &&
+          rdBlockNsfw == other.rdBlockNsfw &&
           twBlockFeed == other.twBlockFeed &&
           twBlockTrends == other.twBlockTrends &&
+          twBlockSensitive == other.twBlockSensitive &&
           liBlockFeed == other.liBlockFeed &&
           globalGrayscale == other.globalGrayscale &&
           globalBlockNotifications == other.globalBlockNotifications &&

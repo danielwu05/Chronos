@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:chronos_app/services/chronos_guard_service.dart';
+import 'app_profile.dart';
 import 'package:chronos_app/services/extension_packager.dart';
 
 class DetectedBrowser {
@@ -294,8 +295,11 @@ class BrowserExtensionInstaller {
       Directory('/usr/local/share/applications'),
       Directory('/usr/share/applications'),
     ];
+    // Only command names (not the last segment of absolute paths: '/opt/google/chrome-beta/
+    // google-chrome' would match the stable 'google-chrome.desktop' and invent Chrome Beta).
     final names = spec.binaries
-        .map((b) => b.split('/').last.toLowerCase())
+        .where((b) => !b.startsWith('/'))
+        .map((b) => b.toLowerCase())
         .where((b) => b.isNotEmpty)
         .toSet();
     for (final dir in appDirs) {
@@ -304,7 +308,8 @@ class BrowserExtensionInstaller {
         for (final entry in dir.listSync()) {
           if (entry is! File || !entry.path.endsWith('.desktop')) continue;
           final base = entry.uri.pathSegments.last.toLowerCase();
-          if (!names.any((n) => base.contains(n) || base.contains(spec.id))) continue;
+          final stem = base.endsWith('.desktop') ? base.substring(0, base.length - 8) : base;
+          if (!names.contains(stem) && stem != spec.id) continue;
           final lines = entry.readAsLinesSync();
           for (final line in lines) {
             if (!line.startsWith('Exec=')) continue;
@@ -354,6 +359,10 @@ class BrowserExtensionInstaller {
         }
       }
 
+      // Never report two browsers for the same executable.
+      if (resolvedExe != null && found.any((b) => b.executable == resolvedExe)) {
+        resolvedExe = null;
+      }
       if (resolvedExe != null || (skipBinaryCheckForTest && existingCfg != null)) {
         found.add(DetectedBrowser(
           id: spec.id,
@@ -409,7 +418,7 @@ class BrowserExtensionInstaller {
   static File _userRemovedFlagFile(String home) =>
       File('$home/.local/share/chronos/.extension_removed_by_user');
 
-  /// Returns true when the user explicitly uninstalled extensions after passing Anti-Cheat verification.
+  /// Returns true when the user explicitly uninstalled extensions after passing Anti-Burla verification.
   static bool hasUserRemovedExtensionFlag({String? homeOverride}) {
     final home = homeOverride ?? Platform.environment['HOME'] ?? '/tmp';
     return _userRemovedFlagFile(home).existsSync();
@@ -425,15 +434,77 @@ class BrowserExtensionInstaller {
     }
   }
 
+  /// Chromium-based browsers poll extension updates only every few hours. On distros whose
+  /// launchers read `~/.config/<browser>-flags.conf` (Arch and derivatives) we add
+  /// `--extensions-update-frequency=30`, so new Chronos builds reach the browser within
+  /// ~30 seconds without pressing "Update" (takes effect the next time the browser starts).
+  static const String extensionUpdateFlag = '--extensions-update-frequency=30';
+
+  static void ensureExtensionUpdateFrequencyFlags({String? homeOverride}) {
+    final home = homeOverride ?? Platform.environment['HOME'];
+    if (home == null) return;
+    final configHome = homeOverride == null ? (Platform.environment['XDG_CONFIG_HOME'] ?? '$home/.config') : '$home/.config';
+    const browsers = <String, List<String>>{
+      'chrome-flags.conf': ['/usr/bin/google-chrome-stable', '/usr/bin/google-chrome'],
+      'chromium-flags.conf': ['/usr/bin/chromium'],
+      'brave-flags.conf': ['/usr/bin/brave', '/usr/bin/brave-browser'],
+    };
+    browsers.forEach((file, launchers) {
+      if (!launchers.any((l) => File(l).existsSync())) return;
+      try {
+        final f = File('$configHome/$file');
+        final current = f.existsSync() ? f.readAsStringSync() : '';
+        final lines = current.split('\n').where((l) => !l.trim().startsWith('--extensions-update-frequency')).toList();
+        while (lines.isNotEmpty && lines.last.trim().isEmpty) {
+          lines.removeLast();
+        }
+        lines.add(extensionUpdateFlag);
+        final next = '${lines.join('\n')}\n';
+        if (next.trimLeft() != current.trimLeft() || !current.contains(extensionUpdateFlag)) {
+          f.parent.createSync(recursive: true);
+          f.writeAsStringSync(next.startsWith('\n') ? next.substring(1) : next);
+        }
+      } catch (_) {}
+    });
+  }
+
+  /// Opens the Chronos extension page ("Allow in Incognito" toggle) in every installed
+  /// Chromium-based browser. Firefox needs nothing: its policy already allows private windows.
+  /// Returns the browsers that were opened.
+  /// [skip]: browser ids (chrome, chromium, brave) whose extension already has access.
+  static Future<List<String>> openIncognitoPermissionPages({Set<String> skip = const {}}) async {
+    final opened = <String>[];
+    const targets = <String, (List<String>, String, String)>{
+      'Google Chrome': (['/usr/bin/google-chrome-stable', '/usr/bin/google-chrome'], 'chrome', 'chrome'),
+      'Chromium': (['/usr/bin/chromium'], 'chrome', 'chromium'),
+      'Brave': (['/usr/bin/brave', '/usr/bin/brave-browser'], 'brave', 'brave'),
+    };
+    for (final entry in targets.entries) {
+      final (launchers, scheme, id) = entry.value;
+      if (skip.contains(id)) continue;
+      final exe = launchers.firstWhere((l) => File(l).existsSync(), orElse: () => '');
+      if (exe.isEmpty) continue;
+      try {
+        await Process.start(exe, ['$scheme://extensions/?id=$extensionId'], mode: ProcessStartMode.detached);
+        opened.add(entry.key);
+      } catch (_) {}
+    }
+    return opened;
+  }
+
   static Future<BrowserInstallResult> installAll({
     bool isAntiCheatActive = false,
     bool launchWithExtension = false,
     bool forceMandatory = false,
     String? homeOverride,
   }) async {
+    if (ChronosProfile.isDev) {
+      return BrowserInstallResult(success: false, browsers: const [], extensionPath: '', extensionId: extensionId, message: ChronosProfile.devUnavailableMessage);
+    }
     if (forceMandatory || isAntiCheatActive) {
       await clearUserRemovedExtensionFlag(homeOverride: homeOverride);
     }
+    ensureExtensionUpdateFrequencyFlags(homeOverride: homeOverride);
     final report = await installAllAutomatically(
       launchWithExtension: launchWithExtension,
       forceMandatory: forceMandatory || isAntiCheatActive,
@@ -459,6 +530,9 @@ class BrowserExtensionInstaller {
     bool forceMandatory = false,
     String? homeOverride,
   }) async {
+    if (ChronosProfile.isDev) {
+      return BrowserInstallReport(success: false, message: ChronosProfile.devUnavailableMessage, configuredBrowsers: const [], chromeExtensionPath: '', firefoxExtensionPath: '');
+    }
     if (forceMandatory) {
       await clearUserRemovedExtensionFlag(homeOverride: homeOverride);
     }
@@ -900,6 +974,8 @@ class BrowserExtensionInstaller {
     }
 
     for (final prof in profiles) {
+      // Chrome keeps old version folders (1.1.64_0, 1.1.67_0, ...) until it cleans up:
+      // the installed version is the newest folder, not any of them.
       String? dirVersion;
       final extIdDir = Directory('${prof.path}/Extensions/$extensionId');
       if (extIdDir.existsSync()) {
@@ -910,17 +986,19 @@ class BrowserExtensionInstaller {
                 .lastWhere((s) => s.isNotEmpty, orElse: () => '')
                 .split('_')
                 .first;
-            if (rawVer.isNotEmpty) {
-              hasAnyEntry = true;
-              if (ExtensionPackager.compareVersions(rawVer, expected) < 0) {
-                hasOutdatedOrDisabled = true;
-                outdatedVersion ??= rawVer;
-              } else {
-                dirVersion = rawVer;
-              }
+            if (rawVer.isNotEmpty &&
+                (dirVersion == null || ExtensionPackager.compareVersions(rawVer, dirVersion) > 0)) {
+              dirVersion = rawVer;
             }
           }
         } catch (_) {}
+      }
+      if (dirVersion != null) {
+        hasAnyEntry = true;
+        if (ExtensionPackager.compareVersions(dirVersion, expected) < 0) {
+          hasOutdatedOrDisabled = true;
+          outdatedVersion ??= dirVersion;
+        }
       }
 
       final prefFile = File('${prof.path}/Preferences');
@@ -937,8 +1015,9 @@ class BrowserExtensionInstaller {
         final state = item['state'];
         final disableReasons = item['disable_reasons'];
         final disabled = disableReasons is List && disableReasons.isNotEmpty;
+        // Preferences is only rewritten from time to time: the folder version wins.
         final prefVer = (item['manifest'] is Map) ? item['manifest']['version']?.toString() : null;
-        final effVer = (prefVer != null && prefVer.isNotEmpty) ? prefVer : dirVersion;
+        final effVer = dirVersion ?? ((prefVer != null && prefVer.isNotEmpty) ? prefVer : null);
 
         if (disabled || state == 0) {
           hasOutdatedOrDisabled = true;
@@ -1222,8 +1301,9 @@ class BrowserExtensionInstaller {
   }
 
   /// Removes Chronos extension descriptors and unpacked copies across all user browser profiles
-  /// after Anti-Cheat verification has succeeded, and records `.extension_removed_by_user`.
+  /// after Anti-Burla verification has succeeded, and records `.extension_removed_by_user`.
   static Future<void> removeExtensionFromUserBrowsers({String? homeOverride}) async {
+    if (ChronosProfile.isDev) return;
     final home = homeOverride ?? Platform.environment['HOME'] ?? '/tmp';
     final flagFile = _userRemovedFlagFile(home);
     await flagFile.parent.create(recursive: true);
@@ -1302,6 +1382,7 @@ class BrowserExtensionInstaller {
     bool isAntiCheatActive = false,
     String? homeOverride,
   }) async {
+    if (ChronosProfile.isDev) return false;
     if (isAntiCheatActive) {
       await clearUserRemovedExtensionFlag(homeOverride: homeOverride);
     } else if (hasUserRemovedExtensionFlag(homeOverride: homeOverride)) {

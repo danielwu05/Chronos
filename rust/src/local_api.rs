@@ -138,26 +138,102 @@ fn html_escape(input: &str) -> String {
     out
 }
 
-fn record_active_browser_tab(url: &str, title: &str, audible_url: &str, audible_title: &str) {
-    let clean_url = url.trim();
-    let clean_audible = audible_url.trim();
-    if clean_url.is_empty() && clean_audible.is_empty() {
-        let _ = std::fs::remove_file("/tmp/chronos_active_tab.json");
-        return;
+const ACTIVE_TAB_FILE: &str = "/tmp/chronos_active_tab.json";
+
+/// Merges a browser report into the active-tab file.
+/// - `focused`: the focused tab (`url`/`title`), when the report includes it;
+/// - `audible`: `Some((url, title))` when the report also describes the audible tab
+///   (`/api/status`), `None` when it does not (`/api/check` from a content script) — in
+///   that case the previous audible tab is kept, with its own timestamp.
+/// The focused and audible parts expire independently (see `youtube::ACTIVE_TAB_FRESH_MS`).
+pub(crate) fn merge_active_tab_report(
+    previous: Option<serde_json::Value>,
+    focused: Option<(&str, &str)>,
+    audible: Option<(&str, &str)>,
+    now_ms: i64,
+    source: &str,
+    reporter: &str,
+) -> serde_json::Value {
+    let own = crate::profile::api_host();
+    let prev = previous.unwrap_or_else(|| serde_json::json!({}));
+    let s = |k: &str| prev.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let n = |k: &str| prev.get(k).and_then(|v| v.as_i64()).unwrap_or(0);
+    let clean = |u: &str| if u.contains(&own) { String::new() } else { u.trim().to_string() };
+
+    let (url, title, ts) = match focused {
+        Some((u, t)) if !u.trim().is_empty() => (clean(u), t.trim().to_string(), now_ms),
+        _ => (s("url"), s("title"), n("timestamp_ms")),
+    };
+    // Several browsers can report at once (e.g. Chrome + Chromium). A browser with nothing
+    // playing may only clear audio it reported itself; another browser's fresh audible tab
+    // is kept until it expires.
+    let prev_reporter = s("audible_reporter");
+    let prev_audible_fresh = !s("audible_url").is_empty()
+        && (now_ms - n("audible_timestamp_ms")).abs() <= crate::youtube::AUDIBLE_TAB_FRESH_MS;
+    let (a_url, a_title, a_ts, a_rep) = match audible {
+        Some((u, _)) if u.trim().is_empty() && prev_audible_fresh && !prev_reporter.is_empty() && prev_reporter != reporter => {
+            (s("audible_url"), s("audible_title"), n("audible_timestamp_ms"), prev_reporter.clone())
+        }
+        Some((u, t)) => (clean(u), t.trim().to_string(), now_ms, reporter.to_string()),
+        None => (s("audible_url"), s("audible_title"), n("audible_timestamp_ms").max(0), prev_reporter.clone()),
+    };
+    serde_json::json!({
+        "url": url,
+        "title": title,
+        "audible_url": a_url,
+        "audible_title": a_title,
+        "source": source,
+        "timestamp_ms": ts,
+        "audible_timestamp_ms": a_ts,
+        "audible_reporter": a_rep,
+    })
+}
+
+fn read_active_tab_file() -> Option<serde_json::Value> {
+    std::fs::read_to_string(ACTIVE_TAB_FILE)
+        .ok()
+        .and_then(|c| serde_json::from_str(&c).ok())
+}
+
+fn write_active_tab_file(v: &serde_json::Value) {
+    let tmp = format!("{ACTIVE_TAB_FILE}.{}", std::process::id());
+    if std::fs::write(&tmp, v.to_string()).is_ok() {
+        let _ = std::fs::rename(&tmp, ACTIVE_TAB_FILE);
     }
-    let now_ms = SystemTime::now()
+}
+
+fn now_millis() -> i64 {
+    SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
-        .as_millis() as i64;
-    let payload = serde_json::json!({
-        "url": if clean_url.contains("127.0.0.1:4545") { "" } else { clean_url },
-        "title": title.trim(),
-        "audible_url": if clean_audible.contains("127.0.0.1:4545") { "" } else { clean_audible },
-        "audible_title": audible_title.trim(),
-        "source": "extension",
-        "timestamp_ms": now_ms,
-    });
-    let _ = std::fs::write("/tmp/chronos_active_tab.json", payload.to_string());
+        .as_millis() as i64
+}
+
+/// Full report from the extension background (`/api/status`): focused + audible tabs.
+fn record_active_browser_tab(url: &str, title: &str, audible_url: &str, audible_title: &str, reporter: &str) {
+    let focused = (!url.trim().is_empty()).then_some((url, title));
+    let merged = merge_active_tab_report(read_active_tab_file(), focused, Some((audible_url, audible_title)), now_millis(), "extension", reporter);
+    write_active_tab_file(&merged);
+}
+
+/// Focused-tab-only report (`/api/check` from the page's content script, or the proxy):
+/// keeps the audible tab.
+pub(crate) fn record_focused_browser_tab(url: &str, title: &str, source: &str) {
+    if url.trim().is_empty() {
+        return;
+    }
+    let merged = merge_active_tab_report(read_active_tab_file(), Some((url, title)), None, now_millis(), source, "");
+    write_active_tab_file(&merged);
+}
+
+/// A tab closed: forget the focused tab but keep the audible one (it may still be playing).
+fn clear_focused_browser_tab() {
+    if let Some(mut v) = read_active_tab_file() {
+        v["url"] = serde_json::json!("");
+        v["title"] = serde_json::json!("");
+        v["timestamp_ms"] = serde_json::json!(0);
+        write_active_tab_file(&v);
+    }
 }
 
 fn update_bool_field(target: &mut bool, obj: &serde_json::Map<String, serde_json::Value>, keys: &[&str]) {
@@ -205,6 +281,8 @@ pub(crate) fn merge_focus_filters(mut current: db::FocusFilters, obj: &serde_jso
     update_bool_field(&mut current.yt_educational_mode, obj, &["ytEducationalMode", "yt_educational_mode"]);
     update_bool_field(&mut current.yt_block_sidebar, obj, &["ytBlockSidebar", "yt_block_sidebar"]);
     update_bool_field(&mut current.yt_block_comments, obj, &["ytBlockComments", "yt_block_comments"]);
+    update_bool_field(&mut current.yt_show_only_enabled, obj, &["ytShowOnlyEnabled", "yt_show_only_enabled"]);
+    update_string_list_field(&mut current.yt_show_only_types, obj, &["ytShowOnlyTypes", "yt_show_only_types"]);
 
     update_bool_field(&mut current.ig_block_reels, obj, &["igBlockReels", "ig_block_reels"]);
     update_bool_field(&mut current.ig_block_feed, obj, &["igBlockFeed", "ig_block_feed"]);
@@ -217,6 +295,8 @@ pub(crate) fn merge_focus_filters(mut current: db::FocusFilters, obj: &serde_jso
 
     update_bool_field(&mut current.tw_block_feed, obj, &["twBlockFeed", "tw_block_feed"]);
     update_bool_field(&mut current.tw_block_trends, obj, &["twBlockTrends", "tw_block_trends"]);
+    update_bool_field(&mut current.rd_block_nsfw, obj, &["rdBlockNsfw", "rd_block_nsfw"]);
+    update_bool_field(&mut current.tw_block_sensitive, obj, &["twBlockSensitive", "tw_block_sensitive"]);
 
     update_bool_field(&mut current.li_block_feed, obj, &["liBlockFeed", "li_block_feed"]);
 
@@ -566,10 +646,10 @@ fn resolve_lang_prefs(requested_lang: Option<&str>) -> (String, &'static str, &'
         .filter(|s| !s.is_empty())
         .map(|s| db::normalize_primary_language(s).to_string())
         .unwrap_or_else(db::get_primary_language);
-    if raw == "en-US" {
-        (raw, "english", "US")
+    if raw == "pt-BR" {
+        (raw, "brazilian", "BR")
     } else {
-        ("pt-BR".to_string(), "brazilian", "BR")
+        (raw, "english", "US")
     }
 }
 
@@ -740,6 +820,7 @@ pub(crate) fn build_status_payload() -> serde_json::Value {
                 "consumedSeconds": s.consumed_seconds,
                 "remainingSeconds": s.remaining_seconds,
                 "isBlocked": s.is_blocked,
+                "counting": !s.is_blocked && engine::is_entity_counting(&s.entity_id),
                 "emergencyTokensRemaining": s.emergency_tokens_remaining,
                 "isWeekend": s.is_weekend,
                 "weekendQuotaSeconds": s.weekend_quota_seconds,
@@ -754,7 +835,7 @@ pub(crate) fn build_status_payload() -> serde_json::Value {
         steam_api::translate_tags_for_display(&filters.launcher_blocked_tags, steam_lang);
     serde_json::json!({
         "online": true,
-        "port": API_DEFAULT_PORT,
+        "port": crate::profile::api_port(),
         "serverVersion": "1.2.0",
         "revision": filters_revision(&filters),
         "stateRevision": db::get_state_revision(),
@@ -765,7 +846,59 @@ pub(crate) fn build_status_payload() -> serde_json::Value {
         "antiCheatMode": anti_cheat.mode,
         "sites": sites_json,
         "focusFilters": proxy::focus_filters_json_value(&filters),
+        "extensionUpdate": extension_update_status_json(),
+        "adultFilter": crate::adult::status_json(),
     })
+}
+
+/// Browser-extension self-update hints read by `background.js`:
+/// newest packaged version, whether auto-update is on, and a nonce bumped by
+/// "Atualizar agora" in the app settings.
+pub fn extension_update_status_json() -> serde_json::Value {
+    serde_json::json!({
+        "latestVersion": latest_extension_version_cached().unwrap_or_default(),
+        "autoUpdate": extension_auto_update_enabled(),
+        "requestNonce": db::get_config("ext_update_request_nonce").unwrap_or_default(),
+        "firefoxLatestVersion": crate::firefox_updates::latest_firefox_version().unwrap_or_default(),
+    })
+}
+
+pub fn extension_auto_update_enabled() -> bool {
+    db::get_config("ext_auto_update").map_or(true, |v| v != "false")
+}
+
+pub fn set_extension_auto_update(enabled: bool) {
+    let _ = db::set_config("ext_auto_update", if enabled { "true" } else { "false" });
+    let _ = db::bump_state_revision();
+}
+
+pub fn request_extension_update_now() {
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis()
+        .to_string();
+    let _ = db::set_config("ext_update_request_nonce", &nonce);
+    let _ = db::bump_state_revision();
+}
+
+static LATEST_EXT_VERSION: parking_lot::Mutex<Option<(std::path::PathBuf, std::time::SystemTime, String)>> =
+    parking_lot::Mutex::new(None);
+
+/// Version of the CRX served at `/extension/chronos.crx`, cached by file mtime
+/// (`/api/status` is polled every 1.5s).
+pub fn latest_extension_version_cached() -> Option<String> {
+    let path = find_chromium_extension_crx()?;
+    let mtime = std::fs::metadata(&path).and_then(|m| m.modified()).ok()?;
+    let mut guard = LATEST_EXT_VERSION.lock();
+    if let Some((p, t, v)) = guard.as_ref() {
+        if *p == path && *t == mtime {
+            return Some(v.clone());
+        }
+    }
+    let v = crx_manifest_version(&path)?;
+    *guard = Some((path, mtime, v.clone()));
+    Some(v)
 }
 
 fn filters_revision(f: &db::FocusFilters) -> String {
@@ -872,7 +1005,29 @@ fn format_minutes(seconds: i64) -> String {
     }
 }
 
+/// Block page in the app language (texts translated by `i18n::localize_html`).
 fn render_blocked_html(
+    display_name: &str,
+    entity_id: &str,
+    original_url: &str,
+    daily_quota_text: &str,
+    emergency_tokens: i64,
+    custom_reason: Option<&str>,
+    same_origin_api: bool,
+) -> String {
+    let reason = custom_reason.map(crate::i18n::tr_msg);
+    crate::i18n::localize_html(&render_blocked_html_pt(
+        display_name,
+        entity_id,
+        original_url,
+        daily_quota_text,
+        emergency_tokens,
+        reason.as_deref(),
+        same_origin_api,
+    ))
+}
+
+fn render_blocked_html_pt(
     display_name: &str,
     entity_id: &str,
     original_url: &str,
@@ -884,17 +1039,25 @@ fn render_blocked_html(
     let safe_name = html_escape(display_name);
     let safe_quota = html_escape(daily_quota_text);
     let is_launcher_block = entity_id == "launcher_filter" || custom_reason.is_some();
-    let badge_text = if is_launcher_block {
+    let is_adult_block = entity_id == "adult_filter";
+    let badge_text = if is_adult_block {
+        "Filtro de Conteúdo Adulto"
+    } else if is_launcher_block {
         "Filtro de Jogos & Launchers"
     } else {
         "Limite de Tempo Esgotado"
     };
-    let headline_text = if is_launcher_block {
+    let headline_text = if is_adult_block {
+        "Conteúdo Adulto Bloqueado"
+    } else if is_launcher_block {
         "Conteúdo de Jogo Bloqueado"
     } else {
         "Site Indisponível"
     };
-    let reason_html = if let Some(r) = custom_reason.filter(|s| !s.trim().is_empty()) {
+    let reason_html = if is_adult_block {
+        let safe_reason = html_escape(custom_reason.unwrap_or("Conteúdo adulto").trim());
+        format!(r#"Esta página foi bloqueada pelo filtro de conteúdo adulto: <strong>{safe_reason}</strong>."#)
+    } else if let Some(r) = custom_reason.filter(|s| !s.trim().is_empty()) {
         let safe_reason = html_escape(r.trim());
         format!(
             r#"O conteúdo <span class="site-target">{safe_name}</span> (loja, página do jogo, guias, discussões ou artworks) foi bloqueado: <strong>{safe_reason}</strong>."#
@@ -921,9 +1084,14 @@ fn render_blocked_html(
         )
     };
 
-    let token_block = if is_launcher_block {
+    let token_block = if is_adult_block {
         r#"<div class="token-section" style="border-color:rgba(255,255,255,0.1);background:rgba(255,255,255,0.03);">
-      <div class="token-text" style="color:#8b949e;margin-bottom:0;">Para liberar este conteúdo, remova a tag ou nome correspondente nas configurações de <strong>Launchers & Jogos</strong> (Anti-Cheat deve estar desativado).</div>
+      <div class="token-text" style="color:#8b949e;margin-bottom:0;">Tokens de emergência não liberam conteúdo adulto. Se esta página foi bloqueada por engano, adicione-a às <strong>Exceções</strong> do Filtro de Conteúdo Adulto (Anti-Burla deve estar desativado).</div>
+    </div>"#
+            .to_string()
+    } else if is_launcher_block {
+        r#"<div class="token-section" style="border-color:rgba(255,255,255,0.1);background:rgba(255,255,255,0.03);">
+      <div class="token-text" style="color:#8b949e;margin-bottom:0;">Para liberar este conteúdo, remova a tag ou nome correspondente nas configurações de <strong>Launchers & Jogos</strong> (Anti-Burla deve estar desativado).</div>
     </div>"#
             .to_string()
     } else if emergency_tokens > 0 {
@@ -1068,11 +1236,10 @@ const EXTENSION_CRX_URL: &str = "http://127.0.0.1:4545/extension/chronos.crx";
 const CHROMIUM_EXTENSION_ID: &str = "jmbcpjljbgjabggbblfajojeahficjgi";
 
 fn find_chromium_extension_crx() -> Option<std::path::PathBuf> {
-    let home = std::env::var("HOME").unwrap_or_default();
     [
         std::path::PathBuf::from("/usr/local/share/chronos/chronos.crx"),
-        std::path::PathBuf::from(format!("{home}/.local/share/chronos/guard/build/chronos.crx")),
-        std::path::PathBuf::from(format!("{home}/.local/share/chronos/chronos_extension.crx")),
+        crate::profile::data_dir().join("guard/build/chronos.crx"),
+        crate::profile::data_dir().join("chronos_extension.crx"),
     ]
     .into_iter()
     .filter(|p| p.is_file())
@@ -1100,6 +1267,70 @@ pub(crate) fn crx_manifest_version(path: &std::path::Path) -> Option<String> {
     parsed.get("version")?.as_str().map(str::to_string)
 }
 
+fn extension_reports_path() -> std::path::PathBuf {
+    crate::profile::data_dir().join("extension_reports.json")
+}
+
+/// Version each browser's extension reported last ({browser: {ver, ts}}), written at most
+/// every 30 s per browser.
+fn record_extension_report(browser: &str, ver: &str) {
+    if browser.is_empty() || ver.is_empty() || browser.len() > 24 || ver.len() > 24 {
+        return;
+    }
+    static LAST: std::sync::OnceLock<parking_lot::Mutex<HashMap<String, (String, i64)>>> = std::sync::OnceLock::new();
+    let now = chrono_now_ms();
+    {
+        let mut last = LAST.get_or_init(Default::default).lock();
+        if let Some((v, t)) = last.get(browser) {
+            if v == ver && now - *t < 30_000 {
+                return;
+            }
+        }
+        last.insert(browser.to_string(), (ver.to_string(), now));
+    }
+    let mut map: serde_json::Map<String, serde_json::Value> = std::fs::read_to_string(extension_reports_path())
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_default();
+    map.insert(browser.to_string(), serde_json::json!({ "ver": ver, "ts": now }));
+    let path = extension_reports_path();
+    let tmp = path.with_extension("json.tmp");
+    if std::fs::write(&tmp, serde_json::Value::Object(map).to_string()).is_ok() {
+        let _ = std::fs::rename(&tmp, &path);
+    }
+}
+
+fn chrono_now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
+}
+
+/// (browser, version, ms since the report) for every browser that reported.
+pub fn extension_reports() -> Vec<(String, String, i64)> {
+    let now = chrono_now_ms();
+    let map: serde_json::Map<String, serde_json::Value> = std::fs::read_to_string(extension_reports_path())
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_default();
+    map.into_iter()
+        .map(|(b, v)| {
+            let ver = v.get("ver").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let ts = v.get("ts").and_then(|x| x.as_i64()).unwrap_or(0);
+            (b, ver, now - ts)
+        })
+        .collect()
+}
+
+pub(crate) fn read_zip_entry_pub(zip: &[u8], wanted: &str) -> Option<Vec<u8>> {
+    read_zip_entry(zip, wanted)
+}
+
+pub(crate) fn version_sort_key_pub(v: &str) -> Vec<u64> {
+    version_sort_key(v)
+}
+
 /// Minimal local-file-header zip reader (stored or raw-deflate entries).
 fn read_zip_entry(zip: &[u8], wanted: &str) -> Option<Vec<u8>> {
     use std::io::Read;
@@ -1115,7 +1346,8 @@ fn read_zip_entry(zip: &[u8], wanted: &str) -> Option<Vec<u8>> {
         let name = std::str::from_utf8(zip.get(i + 30..i + 30 + name_len)?).ok()?;
         let data_start = i + 30 + name_len + extra_len;
         if flags & 0x08 != 0 {
-            return None; // sizes in data descriptor: not produced by our packager
+            // Sizes in a data descriptor (Mozilla-signed XPIs): use the central directory.
+            return read_zip_entry_central(zip, wanted);
         }
         let data = zip.get(data_start..data_start + comp_size)?;
         if name == wanted {
@@ -1130,6 +1362,49 @@ fn read_zip_entry(zip: &[u8], wanted: &str) -> Option<Vec<u8>> {
             };
         }
         i = data_start + comp_size;
+    }
+    None
+}
+
+/// Zip reader through the central directory (handles data descriptors).
+fn read_zip_entry_central(zip: &[u8], wanted: &str) -> Option<Vec<u8>> {
+    use std::io::Read;
+    let u16_at = |o: usize| -> Option<usize> { Some(u16::from_le_bytes([*zip.get(o)?, *zip.get(o + 1)?]) as usize) };
+    let u32_at = |o: usize| -> Option<usize> {
+        Some(u32::from_le_bytes([*zip.get(o)?, *zip.get(o + 1)?, *zip.get(o + 2)?, *zip.get(o + 3)?]) as usize)
+    };
+    // End of central directory record (search the last 64 KiB).
+    let start = zip.len().saturating_sub(65_557);
+    let eocd = (start..zip.len().saturating_sub(21)).rev().find(|&i| zip[i..i + 4] == [0x50, 0x4b, 0x05, 0x06])?;
+    let entries = u16_at(eocd + 10)?;
+    let mut p = u32_at(eocd + 16)?;
+    for _ in 0..entries {
+        if zip.get(p..p + 4)? != [0x50, 0x4b, 0x01, 0x02] {
+            return None;
+        }
+        let method = u16_at(p + 10)?;
+        let comp_size = u32_at(p + 20)?;
+        let name_len = u16_at(p + 28)?;
+        let extra_len = u16_at(p + 30)?;
+        let comment_len = u16_at(p + 32)?;
+        let local = u32_at(p + 42)?;
+        let name = std::str::from_utf8(zip.get(p + 46..p + 46 + name_len)?).ok()?;
+        if name == wanted {
+            let lname = u16_at(local + 26)?;
+            let lextra = u16_at(local + 28)?;
+            let data_start = local + 30 + lname + lextra;
+            let data = zip.get(data_start..data_start + comp_size)?;
+            return match method {
+                0 => Some(data.to_vec()),
+                8 => {
+                    let mut out = Vec::new();
+                    flate2::read::DeflateDecoder::new(data).read_to_end(&mut out).ok()?;
+                    Some(out)
+                }
+                _ => None,
+            };
+        }
+        p += 46 + name_len + extra_len + comment_len;
     }
     None
 }
@@ -1237,7 +1512,19 @@ async fn handle_api_connection(mut stream: TcpStream) -> Result<(), String> {
             let active_title = query.get("activeTitle").map(String::as_str).unwrap_or("");
             let audible_url = query.get("audibleUrl").map(String::as_str).unwrap_or("");
             let audible_title = query.get("audibleTitle").map(String::as_str).unwrap_or("");
-            record_active_browser_tab(active_url, active_title, audible_url, audible_title);
+            let reporter = query.get("reporter").map(String::as_str).unwrap_or("");
+            record_active_browser_tab(active_url, active_title, audible_url, audible_title, reporter);
+            if let (Some(ver), Some(browser)) = (query.get("ver"), query.get("browser")) {
+                record_extension_report(browser, ver);
+            }
+            if let Some(inc) = query.get("incognito") {
+                // Lock: incognito stays available only while the extension runs there.
+                let browser = query.get("browser").map(String::as_str).unwrap_or("");
+                if crate::adult::record_incognito_access(reporter, inc == "1", browser) {
+                    eprintln!("chronos: extensão {reporter} sem acesso ao anônimo; bloqueando a guia anônima de novo");
+                    crate::adult::relock_private_browsing();
+                }
+            }
 
             let body = build_status_payload().to_string();
             proxy::send_simple_response(
@@ -1391,6 +1678,34 @@ async fn handle_api_connection(mut stream: TcpStream) -> Result<(), String> {
                 }
             }
         }
+        "/api/youtube/types" => {
+            let types: Vec<serde_json::Value> = crate::api::youtube::get_youtube_content_types()
+                .into_iter()
+                .map(|t| serde_json::json!({"id": t.id, "label": t.label}))
+                .collect();
+            let mut wl: Vec<String> = crate::youtube::whitelist_exemptions().into_keys().collect();
+            wl.sort();
+            let body = serde_json::json!({"success": true, "types": types, "whitelistTypes": wl}).to_string();
+            proxy::send_simple_response(
+                &mut stream,
+                "200 OK",
+                "application/json; charset=utf-8",
+                &CORS_HEADERS,
+                body.as_bytes(),
+            )
+            .await?;
+        }
+        "/api/youtube/classify" => {
+            let payload = crate::youtube::handle_classify_payload(&req_body).await;
+            proxy::send_simple_response(
+                &mut stream,
+                "200 OK",
+                "application/json; charset=utf-8",
+                &CORS_HEADERS,
+                payload.to_string().as_bytes(),
+            )
+            .await?;
+        }
         "/api/launchers/tags" => {
             let payload = handle_launchers_tags_payload_for_lang(query.get("lang").map(String::as_str)).await;
             proxy::send_simple_response(
@@ -1438,16 +1753,78 @@ async fn handle_api_connection(mut stream: TcpStream) -> Result<(), String> {
             )
             .await?;
         }
+        "/api/ext/diag" => {
+            // Extension diagnostics (image AI): printed to the daemon journal.
+            let msg = query.get("msg").map(String::as_str).unwrap_or("");
+            let reporter = query.get("reporter").map(String::as_str).unwrap_or("");
+            eprintln!("chronos ext diag [{reporter}]: {}", msg.chars().take(600).collect::<String>());
+            proxy::send_simple_response(
+                &mut stream,
+                "200 OK",
+                "application/json; charset=utf-8",
+                &CORS_HEADERS,
+                br#"{"ok":true}"#,
+            )
+            .await?;
+        }
+        "/api/adult/log" => {
+            // Extension-side +18 blocks (Reddit/X filters) are logged here.
+            let url_param = query.get("url").map(String::as_str).unwrap_or("");
+            if !url_param.is_empty() {
+                let kind = query.get("kind").map(String::as_str).unwrap_or("");
+                crate::adult::log_social_attempt(url_param, kind);
+            }
+            proxy::send_simple_response(
+                &mut stream,
+                "200 OK",
+                "application/json; charset=utf-8",
+                &CORS_HEADERS,
+                br#"{"ok":true}"#,
+            )
+            .await?;
+        }
         "/api/check" => {
             let url_param = query.get("url").map(String::as_str).unwrap_or("");
             let domain_param = query.get("domain").map(String::as_str).unwrap_or("");
             let title_param = query.get("title").map(String::as_str).unwrap_or("");
             let target = if !url_param.is_empty() { url_param } else { domain_param };
-            if !url_param.is_empty() {
-                record_active_browser_tab(url_param, title_param, "", "");
+            let focused_param = query.get("focused").map(String::as_str).unwrap_or("1");
+            if !url_param.is_empty() && focused_param != "0" {
+                record_focused_browser_tab(url_param, title_param, "extension");
             }
+            crate::youtube::warm_classification(target).await;
 
-            if proxy::is_whitelisted_target(target, title_param) {
+            if let Some(hit) = crate::adult::check(target, title_param) {
+                let body = serde_json::json!({
+                    "blocked": true,
+                    "entityId": "adult_filter",
+                    "displayName": "Conteúdo adulto",
+                    "reason": crate::adult::blocked_reason(&hit),
+                    "remainingSeconds": 0,
+                    "dailyQuotaSeconds": 0,
+                    "targetType": "ADULT",
+                })
+                .to_string();
+                proxy::send_simple_response(
+                    &mut stream,
+                    "200 OK",
+                    "application/json; charset=utf-8",
+                    &CORS_HEADERS,
+                    body.as_bytes(),
+                )
+                .await?;
+            } else if let Some(safe) = crate::adult::safe_search_target(target) {
+                // Extension applies SafeSearch right away (browser policies reload slowly).
+                let body = serde_json::json!({ "blocked": false, "safeSearchRedirect": safe }).to_string();
+                proxy::send_simple_response(
+                    &mut stream,
+                    "200 OK",
+                    "application/json; charset=utf-8",
+                    &CORS_HEADERS,
+                    body.as_bytes(),
+                )
+                .await?;
+            } else if proxy::is_whitelisted_target(target, title_param) {
                 proxy::send_simple_response(
                     &mut stream,
                     "200 OK",
@@ -1467,6 +1844,7 @@ async fn handle_api_connection(mut stream: TcpStream) -> Result<(), String> {
                         "dailyQuotaSeconds": matched.daily_quota_seconds,
                         "emergencyTokensRemaining": matched.emergency_tokens_remaining,
                         "targetType": matched.target_type,
+                        "counting": !matched.is_blocked && engine::is_entity_counting(&matched.entity_id),
                     })
                     .to_string()
                 } else {
@@ -1521,7 +1899,7 @@ async fn handle_api_connection(mut stream: TcpStream) -> Result<(), String> {
             }
         }
         "/api/tab_closed" => {
-            let _ = std::fs::remove_file("/tmp/chronos_active_tab.json");
+            clear_focused_browser_tab();
             let body = serde_json::json!({ "success": true, "timestamp": now_ms }).to_string();
             proxy::send_simple_response(
                 &mut stream,
@@ -1546,7 +1924,7 @@ async fn handle_api_connection(mut stream: TcpStream) -> Result<(), String> {
   return "PROXY 127.0.0.1:{}; DIRECT";
 }}
 "#,
-                proxy::PROXY_DEFAULT_PORT
+                crate::profile::proxy_port()
             );
             proxy::send_simple_response(
                 &mut stream,
@@ -1622,6 +2000,82 @@ async fn handle_api_connection(mut stream: TcpStream) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_active_tab_merge_keeps_audible_and_whitelist_per_item() {
+        // /api/status: focused + audible
+        let a = merge_active_tab_report(None, Some(("https://www.youtube.com/watch?v=EduVid12345", "Aula")), Some(("https://www.youtube.com/watch?v=EduVid12345", "Aula")), 1000, "extension", "chrome");
+        // /api/check from another (focused) tab must not wipe the audible tab
+        let b = merge_active_tab_report(Some(a.clone()), Some(("https://docs.google.com/x", "Doc")), None, 2000, "extension", "");
+        assert_eq!(b["url"], "https://docs.google.com/x");
+        assert_eq!(b["timestamp_ms"], 2000);
+        assert_eq!(b["audible_url"], "https://www.youtube.com/watch?v=EduVid12345");
+        assert_eq!(b["audible_timestamp_ms"], 1000, "audible keeps its own timestamp");
+        // /api/status with the browser unfocused: keeps the focused part, refreshes audible
+        // Another browser (Chromium) with nothing playing must not erase Chrome's audio
+        let other = merge_active_tab_report(Some(b.clone()), None, Some(("", "")), 2500, "extension", "chromium");
+        assert_eq!(other["audible_url"], "https://www.youtube.com/watch?v=EduVid12345");
+        assert_eq!(other["audible_reporter"], "chrome");
+        // The same browser stopping playback clears it
+        let c = merge_active_tab_report(Some(other), None, Some(("", "")), 3000, "extension", "chrome");
+        assert_eq!(c["url"], "https://docs.google.com/x");
+        assert_eq!(c["audible_url"], "");
+        // Our own pages are never recorded
+        let d = merge_active_tab_report(None, Some(("http://127.0.0.1:4545/blocked", "x")), None, 1, "extension", "");
+        assert_eq!(d["url"], "");
+
+        // Whitelisting one item of a group must not exempt the whole group
+        let _lock = crate::tests::TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let db_file = format!("/tmp/chronos_wl_item_{}.db", std::process::id());
+        let _ = std::fs::remove_file(&db_file);
+        db::init_db(&db_file).expect("init temp db");
+        crate::engine::save_rule(
+            "group_study",
+            "Estudo",
+            60,
+            "SELF_CONTROL",
+            "GROUP",
+            r#"{"apps":[{"name":"LibreOffice","exec":"libreoffice"}],"sites":["youtube.com"]}"#,
+            None,
+            None,
+        )
+        .unwrap();
+        db::get_conn()
+            .lock()
+            .execute(
+                "INSERT INTO usage_intervals (interval_id, entity_id, device_id, started_at_utc, ended_at_utc) VALUES ('u1','group_study','d',?1,?2)",
+                (now_millis() / 1000 - 120, now_millis() / 1000 - 30),
+            )
+            .unwrap();
+        db::save_whitelist_group("wl", "WL", r#"{"apps":[{"name":"LibreOffice","exec":"libreoffice"}],"sites":[]}"#).unwrap();
+        let st = crate::engine::get_all_site_rules_status();
+        let study = st.iter().find(|s| s.entity_id == "group_study").expect("rule status");
+        assert!(study.is_blocked, "quota used up: YouTube in the group stays blocked even with LibreOffice whitelisted");
+        assert!(crate::proxy::find_blocked_rule("https://www.youtube.com/watch?v=x", &st).is_some());
+        let _ = std::fs::remove_file(db_file);
+    }
+
+    #[test]
+    fn test_extension_auto_update_toggle_and_request_nonce() {
+        let _lock = crate::tests::TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let db_file = format!("/tmp/chronos_ext_update_{}.db", std::process::id());
+        let _ = std::fs::remove_file(&db_file);
+        db::init_db(&db_file).expect("init temp db");
+
+        assert!(extension_auto_update_enabled(), "on by default");
+        let s0 = extension_update_status_json();
+        assert_eq!(s0["autoUpdate"], true);
+        let nonce0 = s0["requestNonce"].as_str().unwrap_or("").to_string();
+
+        set_extension_auto_update(false);
+        assert_eq!(extension_update_status_json()["autoUpdate"], false);
+        request_extension_update_now();
+        let nonce1 = extension_update_status_json()["requestNonce"].as_str().unwrap().to_string();
+        assert_ne!(nonce0, nonce1, "'Atualizar agora' must change the nonce seen by extensions");
+        assert!(build_status_payload().get("extensionUpdate").is_some());
+
+        let _ = std::fs::remove_file(db_file);
+    }
 
     #[test]
     fn test_crx_manifest_version_reader_stored_and_deflated() {
@@ -1749,7 +2203,7 @@ mod tests {
         assert_eq!(active_env["antiCheatActive"], true);
         assert_eq!(active_env["antiCheatMode"], "CHALLENGE");
 
-        // Attempting to disable Steam/launcher filter while Anti-Cheat is active must fail
+        // Attempting to disable Steam/launcher filter while Anti-Burla is active must fail
         let disable_attempt = serde_json::json!({
             "launcherFilterEnabled": false,
             "launcherBlockedTags": [],
@@ -1779,7 +2233,7 @@ mod tests {
             let text1 = String::from_utf8_lossy(&buf[..n1]);
             assert!(text1.contains("\"antiCheatActive\":true"), "got: {text1}");
 
-            engine::disable_anti_cheat(engine::STAYFOCUSD_CHALLENGE_TEXT)
+            engine::disable_anti_cheat(&engine::current_challenge_text())
                 .expect("disable anti-cheat");
             let _ = notify_state_changed();
 

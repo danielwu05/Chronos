@@ -34,8 +34,9 @@ fn main() {
     db::init_db(&db_path).expect("chronos_proxy: failed initializing SQLite database");
 
     let api_bind = std::env::var("CHRONOS_API_BIND")
-        .unwrap_or_else(|_| format!("127.0.0.1:{}", local_api::API_DEFAULT_PORT));
+        .unwrap_or_else(|_| format!("127.0.0.1:{}", rust_lib_chronos_app::profile::api_port()));
     let proxy_cfg = proxy::ProxyConfig::from_env();
+    let ff_ca_dir = proxy_cfg.ca_dir.clone();
 
     let rt = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(4)
@@ -52,6 +53,14 @@ fn main() {
             eprintln!("chronos_proxy API stopped unexpectedly");
             std::process::exit(1);
         });
+        // Firefox extension updates (HTTPS, release profile only: fixed port 4547).
+        if !rust_lib_chronos_app::profile::is_dev() {
+            tokio::spawn(async move {
+                if let Err(e) = rust_lib_chronos_app::firefox_updates::run_firefox_update_server(ff_ca_dir).await {
+                    eprintln!("chronos_proxy firefox update server: {e}");
+                }
+            });
+        }
         let proxy_handle = tokio::spawn(async move {
             if let Err(e) = proxy::run_proxy_server(proxy_cfg).await {
                 eprintln!("chronos_proxy proxy error: {e}");
@@ -73,6 +82,9 @@ fn main() {
             let mut last_periodic = std::time::Instant::now();
             let mut last_proxy_sync = std::time::Instant::now();
             let mut last_lutris_hide_sync: Option<std::time::Instant> = None;
+            // Whole-screen +18 detector (idle unless enabled in the adult filter).
+            rust_lib_chronos_app::screen_guard::spawn();
+            let mut last_app_check = std::time::Instant::now();
             loop {
                 let notified = tokio::time::timeout(
                     std::time::Duration::from_millis(250),
@@ -101,6 +113,14 @@ fn main() {
                     last_lutris_hide_sync = Some(std::time::Instant::now());
                     let _ = tokio::task::spawn_blocking(|| {
                         let _ = launchers::sync_lutris_hidden_games();
+                    })
+                    .await;
+                }
+                if last_app_check.elapsed() >= std::time::Duration::from_secs(5) {
+                    last_app_check = std::time::Instant::now();
+                    let _ = tokio::task::spawn_blocking(|| {
+                        rust_lib_chronos_app::app_watchdog::ensure_app_running();
+                        rust_lib_chronos_app::engine::enforce_rejected_quarantine();
                     })
                     .await;
                 }

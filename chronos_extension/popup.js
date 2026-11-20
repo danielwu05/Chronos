@@ -47,6 +47,62 @@ document.addEventListener("DOMContentLoaded", () => {
   const fYtEdu = document.getElementById("f-yt-edu");
   const fYtSidebar = document.getElementById("f-yt-sidebar");
   const fYtComments = document.getElementById("f-yt-comments");
+  const fYtShowOnly = document.getElementById("f-yt-show-only");
+  const fYtTypesBox = document.getElementById("f-yt-types");
+  const fYtImportWl = document.getElementById("f-yt-import-wl");
+  // Selected YouTube content types for "Mostrar apenas" (ids like "educacional").
+  let currentShowOnlyTypes = [];
+  let ytTypeCatalog = [];
+  let ytWhitelistTypes = [];
+
+  function renderYtTypes() {
+    if (!fYtTypesBox) return;
+    fYtTypesBox.textContent = "";
+    const known = ytTypeCatalog.length
+      ? ytTypeCatalog
+      : currentShowOnlyTypes.map((id) => ({ id, label: id }));
+    for (const t of known) {
+      const label = document.createElement("label");
+      label.style.cssText = "display:flex;align-items:center;gap:3px;cursor:pointer;";
+      const cb = document.createElement("input");
+      cb.type = "checkbox";
+      cb.checked = currentShowOnlyTypes.includes(t.id);
+      cb.addEventListener("change", () => {
+        currentShowOnlyTypes = cb.checked
+          ? Array.from(new Set(currentShowOnlyTypes.concat([t.id])))
+          : currentShowOnlyTypes.filter((x) => x !== t.id);
+        if (!currentShowOnlyTypes.length && fYtShowOnly) fYtShowOnly.checked = false;
+        sendFiltersUpdate();
+      });
+      label.appendChild(cb);
+      label.appendChild(document.createTextNode(t.label));
+      fYtTypesBox.appendChild(label);
+    }
+  }
+
+  function loadYtTypes() {
+    try {
+      chrome.runtime.sendMessage({ type: "GET_YT_TYPES" }, (resp) => {
+        if (chrome.runtime.lastError || !resp) return;
+        ytTypeCatalog = Array.isArray(resp.types) ? resp.types : [];
+        ytWhitelistTypes = Array.isArray(resp.whitelistTypes) ? resp.whitelistTypes : [];
+        renderYtTypes();
+      });
+    } catch (_) {}
+  }
+  loadYtTypes();
+  if (fYtImportWl) {
+    fYtImportWl.addEventListener("click", () => {
+      if (!ytWhitelistTypes.length) {
+        fYtImportWl.textContent = "Nenhum tipo na Lista Branca";
+        setTimeout(() => { fYtImportWl.textContent = "Importar da Lista Branca"; }, 2000);
+        return;
+      }
+      currentShowOnlyTypes = Array.from(new Set(currentShowOnlyTypes.concat(ytWhitelistTypes)));
+      renderYtTypes();
+      sendFiltersUpdate();
+    });
+  }
 
   const fIgReels = document.getElementById("f-ig-reels");
   const fIgFeed = document.getElementById("f-ig-feed");
@@ -59,6 +115,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
   const fTwFeed = document.getElementById("f-tw-feed");
   const fTwTrends = document.getElementById("f-tw-trends");
+  const fRdNsfw = document.getElementById("f-rd-nsfw");
+  const fTwSensitive = document.getElementById("f-tw-sensitive");
 
   const fLiFeed = document.getElementById("f-li-feed");
 
@@ -150,7 +208,7 @@ document.addEventListener("DOMContentLoaded", () => {
     launcherAcWarning.classList.toggle("is-visible", antiCheatActive);
     launcherAcWarning.textContent =
       customMsg ||
-      "🔒 Anti-Cheat ativo: desative para remover tags/nomes ou desligar o filtro.";
+      "🔒 Anti-Burla ativo: desative para remover tags/nomes ou desligar o filtro.";
   }
 
   function renderChipList(containerEl, list, onRemove, isTag = false) {
@@ -172,10 +230,10 @@ document.addEventListener("DOMContentLoaded", () => {
       rmBtn.type = "button";
       rmBtn.className = "chip-rm";
       rmBtn.textContent = antiCheatActive ? "🔒" : "×";
-      rmBtn.title = antiCheatActive ? "Desative o Anti-Cheat para remover" : `Remover ${displayLabel}`;
+      rmBtn.title = antiCheatActive ? "Desative o Anti-Burla para remover" : `Remover ${displayLabel}`;
       rmBtn.addEventListener("click", () => {
         if (antiCheatActive) {
-          syncAcWarningUi("🔒 Anti-Cheat ativo: remoção de tag/nome bloqueada.");
+          syncAcWarningUi("🔒 Anti-Burla ativo: remoção de tag/nome bloqueada.");
           return;
         }
         onRemove(term);
@@ -246,6 +304,9 @@ document.addEventListener("DOMContentLoaded", () => {
     if (fYtEdu) fYtEdu.checked = !!filters.ytEducationalMode;
     if (fYtSidebar) fYtSidebar.checked = !!filters.ytBlockSidebar;
     if (fYtComments) fYtComments.checked = !!filters.ytBlockComments;
+    currentShowOnlyTypes = Array.isArray(filters.ytShowOnlyTypes) ? filters.ytShowOnlyTypes.slice() : [];
+    if (fYtShowOnly) fYtShowOnly.checked = !!filters.ytShowOnlyEnabled;
+    renderYtTypes();
 
     if (fIgReels) fIgReels.checked = !!filters.igBlockReels;
     if (fIgFeed) fIgFeed.checked = !!filters.igBlockFeed;
@@ -258,6 +319,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
     if (fTwFeed) fTwFeed.checked = !!filters.twBlockFeed;
     if (fTwTrends) fTwTrends.checked = !!filters.twBlockTrends;
+    if (fRdNsfw) fRdNsfw.checked = !!filters.rdBlockNsfw;
+    if (fTwSensitive) fTwSensitive.checked = !!filters.twBlockSensitive;
 
     if (fLiFeed) fLiFeed.checked = !!filters.liBlockFeed;
 
@@ -304,7 +367,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (isUpdatingFiltersUi) return;
     if (fLauncherEnabled && !fLauncherEnabled.checked && antiCheatActive) {
       fLauncherEnabled.checked = true;
-      syncAcWarningUi("🔒 Anti-Cheat ativo: desative para desligar o filtro de launchers.");
+      syncAcWarningUi("🔒 Anti-Burla ativo: desative para desligar o filtro de launchers.");
       return;
     }
     const prevSnapshot = lastSavedFilters;
@@ -329,6 +392,8 @@ document.addEventListener("DOMContentLoaded", () => {
       ytEducationalMode: fYtEdu ? fYtEdu.checked : false,
       ytBlockSidebar: fYtSidebar ? fYtSidebar.checked : false,
       ytBlockComments: fYtComments ? fYtComments.checked : false,
+      ytShowOnlyEnabled: fYtShowOnly ? fYtShowOnly.checked && currentShowOnlyTypes.length > 0 : false,
+      ytShowOnlyTypes: currentShowOnlyTypes.slice(),
 
       igBlockReels: fIgReels ? fIgReels.checked : false,
       igBlockFeed: fIgFeed ? fIgFeed.checked : false,
@@ -341,6 +406,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
       twBlockFeed: fTwFeed ? fTwFeed.checked : false,
       twBlockTrends: fTwTrends ? fTwTrends.checked : false,
+      rdBlockNsfw: fRdNsfw ? fRdNsfw.checked : false,
+      twBlockSensitive: fTwSensitive ? fTwSensitive.checked : false,
 
       liBlockFeed: fLiFeed ? fLiFeed.checked : false,
 
@@ -371,7 +438,7 @@ document.addEventListener("DOMContentLoaded", () => {
       if (!resp.success) {
         if (resp.antiCheatLocked) {
           antiCheatActive = true;
-          syncAcWarningUi(resp.message || "🔒 Anti-Cheat ativo: remoção bloqueada.");
+          syncAcWarningUi(resp.message || "🔒 Anti-Burla ativo: remoção bloqueada.");
         }
         updateFilterCheckboxes(resp.filters || prevSnapshot);
       } else if (resp.filters) {
@@ -526,11 +593,11 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   [
-    fYtShorts, fYtEdu, fYtSidebar, fYtComments,
+    fYtShorts, fYtEdu, fYtSidebar, fYtComments, fYtShowOnly,
     fIgReels, fIgFeed, fIgComments,
     fTtFeed,
     fRdFeed, fRdComments,
-    fTwFeed, fTwTrends,
+    fTwFeed, fTwTrends, fRdNsfw, fTwSensitive,
     fLiFeed,
     fGrayscale, fNotifications,
     fHudAlpha, fHudScale, fHudHideEye,
@@ -868,6 +935,10 @@ document.addEventListener("DOMContentLoaded", () => {
 
   async function fetchStatus() {
     chrome.runtime.sendMessage({ type: "GET_STATUS" }, async (response) => {
+      if (globalThis.ChronosI18n) {
+        globalThis.ChronosI18n.setLang((response && response.primaryLanguage) || "pt-BR");
+        globalThis.ChronosI18n.observe(document.body);
+      }
       let isConnected = response && response.isConnected;
       let sites = response && response.sites ? response.sites : [];
       if (response) {

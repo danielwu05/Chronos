@@ -1,12 +1,26 @@
+import 'package:chronos_app/services/app_locale.dart';
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+
 import '../main.dart' show themeModeNotifier;
 import '../services/browser_extension_installer.dart';
 import '../services/chronos_guard_service.dart';
+import 'challenge_texts_dialog.dart';
+import '../services/app_profile.dart';
 import '../services/notification_service.dart';
 import '../services/web_block_server.dart';
 import '../src/rust/api/simple.dart';
+import '../src/rust/api/youtube.dart';
+import '../src/rust/api/updater.dart';
+import 'youtube_custom_types_dialog.dart';
+import 'holidays_card.dart';
+import 'adult_filter_card.dart';
+import 'tamper_log_card.dart';
+import 'uninstall_dialog.dart';
 import 'anti_cheat_dialog.dart';
 import 'browser_protection_panel.dart';
 import 'update_dialog.dart';
@@ -18,23 +32,14 @@ class _LauncherSuggestionOption {
   final String? secondaryLabel;
   final String? imageUrl;
 
-  const _LauncherSuggestionOption({
-    required this.value,
-    required this.label,
-    this.secondaryLabel,
-    this.imageUrl,
-  });
+  const _LauncherSuggestionOption({required this.value, required this.label, this.secondaryLabel, this.imageUrl});
 }
 
 class GeneralSettingsView extends StatefulWidget {
   final VoidCallback onResetOnboarding;
   final VoidCallback onSettingsChanged;
 
-  const GeneralSettingsView({
-    super.key,
-    required this.onResetOnboarding,
-    required this.onSettingsChanged,
-  });
+  const GeneralSettingsView({super.key, required this.onResetOnboarding, required this.onSettingsChanged});
 
   @override
   State<GeneralSettingsView> createState() => _GeneralSettingsViewState();
@@ -43,6 +48,7 @@ class GeneralSettingsView extends StatefulWidget {
 class _GeneralSettingsViewState extends State<GeneralSettingsView> {
   final NotificationService _notifications = NotificationService();
   List<DetectedBrowser> _browsers = [];
+  Future<bool>? _dndFuture;
   AntiCheatStateDto? _antiCheatState;
   OnboardingStateDto? _onboardingState;
   ChronosGuardStatus? _guardStatus;
@@ -106,10 +112,7 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
 
   Future<void> _refreshAntiCheatAndFilters() async {
     try {
-      final results = await Future.wait<dynamic>([
-        getAntiCheatState(),
-        getFocusFilters(),
-      ]);
+      final results = await Future.wait<dynamic>([getAntiCheatState(), getFocusFilters()]);
       final ac = results[0] as AntiCheatStateDto;
       final ff = results[1] as FocusFiltersDto;
       if (!mounted) return;
@@ -131,9 +134,7 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
       final entries = await getTagDisplayMap(tags: tags, lang: _primaryLanguage);
       if (mounted) {
         setState(() {
-          _tagDisplayMap = {
-            for (final e in entries) e.canonicalEn: e.displayName,
-          };
+          _tagDisplayMap = {for (final e in entries) e.canonicalEn: e.displayName};
         });
       }
     } catch (_) {}
@@ -161,10 +162,7 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
     setState(() => _loadingTagAutocomplete = true);
     _tagDebounce = Timer(const Duration(milliseconds: 220), () async {
       try {
-        final results = await searchSteamTagsAutocomplete(
-          query: trimmed,
-          lang: _primaryLanguage,
-        );
+        final results = await searchSteamTagsAutocomplete(query: trimmed, lang: _primaryLanguage);
         if (!mounted || _launcherTagCtrl.text.trim() != trimmed) return;
         setState(() {
           _tagAutocomplete = results;
@@ -189,10 +187,7 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
     setState(() => _loadingGameAutocomplete = true);
     _gameDebounce = Timer(const Duration(milliseconds: 250), () async {
       try {
-        final results = await searchSteamGamesAutocomplete(
-          query: trimmed,
-          lang: _primaryLanguage,
-        );
+        final results = await searchSteamGamesAutocomplete(query: trimmed, lang: _primaryLanguage);
         if (!mounted || _launcherNameCtrl.text.trim() != trimmed) return;
         setState(() {
           _gameAutocomplete = results;
@@ -204,6 +199,8 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
     });
   }
 
+  /// Language of the app, the extensions and the Steam tags. Changing it rebuilds the
+  /// whole app (MaterialApp keyed by locale), so this screen reloads in the new language.
   Future<void> _changePrimaryLanguage(String lang) async {
     if (_primaryLanguage == lang) return;
     setState(() => _primaryLanguage = lang);
@@ -213,20 +210,7 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
       return;
     }
     WebBlockServer.nudgeObservers();
-    await _loadLauncherSuggestions();
-    await _refreshTagDisplayMap(_focusFilters?.launcherBlockedTags ?? const []);
-    if (_launcherTagCtrl.text.trim().isNotEmpty) {
-      _onLauncherTagQueryChanged(_launcherTagCtrl.text);
-    }
-    if (_launcherNameCtrl.text.trim().length >= 2) {
-      _onLauncherGameQueryChanged(_launcherNameCtrl.text);
-    }
-    _showSnack(
-      lang == 'en-US'
-          ? 'Idioma principal Steam API definido para English (US).'
-          : 'Idioma principal Steam API definido para Português (Brasil).',
-      true,
-    );
+    setAppLanguageCode(res.message.isNotEmpty ? res.message : lang);
   }
 
   Future<void> _loadAll() async {
@@ -291,10 +275,7 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
     if (!mounted) return;
 
     if (state.isActive && state.mode == 'NUKE') {
-      _showSnack(
-        'Modo Nuke ativo: remoção da extensão bloqueada até o tempo expirar.',
-        false,
-      );
+      _showSnack(tr.modoNukeAtivoRemocaoDaExtensao, false);
       return;
     }
 
@@ -307,17 +288,14 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
         },
       );
       if (!unlocked || !mounted) {
-        _showSnack(
-          'Remoção cancelada: conclua a verificação Anti-Cheat para remover a extensão.',
-          false,
-        );
+        _showSnack(tr.remocaoCanceladaConcluaAVerificacaoAnti, false);
         return;
       }
     }
 
     final postState = await getAntiCheatState();
     if (postState.isActive) {
-      _showSnack('Anti-Cheat ainda ativo. Remoção bloqueada.', false);
+      _showSnack(tr.antiCheatAindaAtivoRemocaoBloqueada, false);
       return;
     }
     if (!mounted) return;
@@ -326,20 +304,17 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
       context: context,
       builder: (ctx) => AlertDialog(
         backgroundColor: const Color(0xFF161922),
-        title: const Text('Remover Extensão & Políticas?', style: TextStyle(color: Colors.white)),
-        content: const Text(
-          'Verificação Anti-Cheat concluída. Isso removerá a extensão Chronos, os links External Extensions e o Chronos Guard (políticas de Chrome/Chromium/Firefox) de todos os navegadores até você reinstalar.\n\nConfirmar remoção?',
+        title: Text(tr.removerExtensaoPoliticas, style: TextStyle(color: Colors.white)),
+        content: Text(
+          tr.verificacaoAntiCheatConcluidaIssoRemovera,
           style: TextStyle(color: Colors.white70, fontSize: 13),
         ),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancelar'),
-          ),
+          TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(tr.cancelar)),
           FilledButton(
             style: FilledButton.styleFrom(backgroundColor: Colors.redAccent.shade700),
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Remover de Todos os Navegadores'),
+            child: Text(tr.removerDeTodosOsNavegadores),
           ),
         ],
       ),
@@ -357,10 +332,7 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
   void _showSnack(String msg, bool success) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(msg),
-        backgroundColor: success ? Colors.teal.shade700 : Colors.redAccent.shade700,
-      ),
+      SnackBar(content: Text(msg), backgroundColor: success ? Colors.teal.shade700 : Colors.redAccent.shade700),
     );
   }
 
@@ -375,6 +347,8 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
     ytEducationalMode: false,
     ytBlockSidebar: false,
     ytBlockComments: false,
+    ytShowOnlyEnabled: false,
+    ytShowOnlyTypes: [],
     igBlockReels: true,
     igBlockFeed: false,
     igBlockComments: false,
@@ -383,6 +357,8 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
     rdBlockComments: false,
     twBlockFeed: false,
     twBlockTrends: false,
+    twBlockSensitive: false,
+    rdBlockNsfw: false,
     liBlockFeed: false,
     globalGrayscale: false,
     globalBlockNotifications: false,
@@ -399,6 +375,8 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
     bool? ytEducationalMode,
     bool? ytBlockSidebar,
     bool? ytBlockComments,
+    bool? ytShowOnlyEnabled,
+    List<String>? ytShowOnlyTypes,
     bool? igBlockReels,
     bool? igBlockFeed,
     bool? igBlockComments,
@@ -407,6 +385,8 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
     bool? rdBlockComments,
     bool? twBlockFeed,
     bool? twBlockTrends,
+    bool? twBlockSensitive,
+    bool? rdBlockNsfw,
     bool? liBlockFeed,
     bool? globalGrayscale,
     bool? globalBlockNotifications,
@@ -419,8 +399,7 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
   }) {
     final current = _focusFilters ?? _defaultFocusFilters;
     final nextGlobalGrayscale = globalGrayscale ?? current.globalGrayscale;
-    final nextGlobalNotifications =
-        globalBlockNotifications ?? current.globalBlockNotifications;
+    final nextGlobalNotifications = globalBlockNotifications ?? current.globalBlockNotifications;
     final rawAlpha = hudAlpha ?? current.hudAlpha;
     final nextHudAlpha = rawAlpha.isFinite ? rawAlpha.clamp(0.15, 1.0) : 0.94;
     final rawScale = hudScale ?? current.hudScale;
@@ -439,6 +418,8 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
       ytEducationalMode: ytEducationalMode ?? current.ytEducationalMode,
       ytBlockSidebar: ytBlockSidebar ?? current.ytBlockSidebar,
       ytBlockComments: ytBlockComments ?? current.ytBlockComments,
+      ytShowOnlyEnabled: ytShowOnlyEnabled ?? current.ytShowOnlyEnabled,
+      ytShowOnlyTypes: ytShowOnlyTypes ?? current.ytShowOnlyTypes,
 
       igBlockReels: igBlockReels ?? current.igBlockReels,
       igBlockFeed: igBlockFeed ?? current.igBlockFeed,
@@ -451,6 +432,8 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
 
       twBlockFeed: twBlockFeed ?? current.twBlockFeed,
       twBlockTrends: twBlockTrends ?? current.twBlockTrends,
+      twBlockSensitive: twBlockSensitive ?? current.twBlockSensitive,
+      rdBlockNsfw: rdBlockNsfw ?? current.rdBlockNsfw,
 
       liBlockFeed: liBlockFeed ?? current.liBlockFeed,
 
@@ -471,6 +454,8 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
     bool? ytEducationalMode,
     bool? ytBlockSidebar,
     bool? ytBlockComments,
+    bool? ytShowOnlyEnabled,
+    List<String>? ytShowOnlyTypes,
     bool? igBlockReels,
     bool? igBlockFeed,
     bool? igBlockComments,
@@ -479,6 +464,8 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
     bool? rdBlockComments,
     bool? twBlockFeed,
     bool? twBlockTrends,
+    bool? twBlockSensitive,
+    bool? rdBlockNsfw,
     bool? liBlockFeed,
     bool? globalGrayscale,
     bool? globalBlockNotifications,
@@ -495,6 +482,8 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
       ytEducationalMode: ytEducationalMode,
       ytBlockSidebar: ytBlockSidebar,
       ytBlockComments: ytBlockComments,
+      ytShowOnlyEnabled: ytShowOnlyEnabled,
+      ytShowOnlyTypes: ytShowOnlyTypes,
       igBlockReels: igBlockReels,
       igBlockFeed: igBlockFeed,
       igBlockComments: igBlockComments,
@@ -503,6 +492,8 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
       rdBlockComments: rdBlockComments,
       twBlockFeed: twBlockFeed,
       twBlockTrends: twBlockTrends,
+      twBlockSensitive: twBlockSensitive,
+      rdBlockNsfw: rdBlockNsfw,
       liBlockFeed: liBlockFeed,
       globalGrayscale: globalGrayscale,
       globalBlockNotifications: globalBlockNotifications,
@@ -531,7 +522,7 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
           _refreshTagDisplayMap(persisted.launcherBlockedTags);
         }
       } catch (_) {}
-      _showSnack('Filtros anti-distração salvos com sucesso!', true);
+      _showSnack(tr.filtrosAntiDistracaoSalvosComSucesso, true);
     }
   }
 
@@ -541,12 +532,10 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
     final clean = rawTerm.trim();
     if (clean.isEmpty) return;
     final current = _focusFilters ?? _defaultFocusFilters;
-    final list = List<String>.from(
-      isTag ? current.launcherBlockedTags : current.launcherBlockedNames,
-    );
+    final list = List<String>.from(isTag ? current.launcherBlockedTags : current.launcherBlockedNames);
     final exists = list.any((t) => t.trim().toLowerCase() == clean.toLowerCase());
     if (exists) {
-      _showSnack('"$clean" já está na lista.', false);
+      _showSnack(tr.p0JaEstaNaLista(clean), false);
       return;
     }
     list.add(clean);
@@ -569,16 +558,12 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
 
   void _removeLauncherTerm({required bool isTag, required String term}) {
     if (_isAntiCheatActive) {
-      _showSnack(
-        'Anti-Cheat ativo: desative o Anti-Cheat para remover tags ou nomes de jogos.',
-        false,
-      );
+      _showSnack(tr.antiCheatAtivoDesativeOAnti, false);
       return;
     }
     final current = _focusFilters ?? _defaultFocusFilters;
-    final list = List<String>.from(
-      isTag ? current.launcherBlockedTags : current.launcherBlockedNames,
-    )..removeWhere((t) => t == term);
+    final list = List<String>.from(isTag ? current.launcherBlockedTags : current.launcherBlockedNames)
+      ..removeWhere((t) => t == term);
     if (isTag) {
       _toggleFocusFilter(launcherBlockedTags: list);
     } else {
@@ -608,10 +593,7 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
   Future<void> _activateLauncherProxy(bool enable) async {
     if (_configuringLauncherProxy) return;
     if (!enable && _isAntiCheatActive) {
-      _showSnack(
-        'Anti-Cheat ativo: desative o Anti-Cheat para remover a proteção de loja dos launchers.',
-        false,
-      );
+      _showSnack(tr.antiCheatAtivoDesativeOAnti2, false);
       return;
     }
     setState(() => _configuringLauncherProxy = true);
@@ -638,10 +620,7 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
             children: [
               Container(
                 padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                  color: Colors.teal.shade900,
-                  borderRadius: BorderRadius.circular(10),
-                ),
+                decoration: BoxDecoration(color: Colors.teal.shade900, borderRadius: BorderRadius.circular(10)),
                 child: const Icon(Icons.settings, color: Colors.tealAccent, size: 24),
               ),
               const SizedBox(width: 12),
@@ -649,11 +628,11 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Configurações Gerais',
+                    tr.configuracoesGerais,
                     style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
                   ),
-                  const Text(
-                    'Ajustes de notificações, extensões locais, modo e segurança',
+                  Text(
+                    tr.ajustesDeNotificacoesExtensoesLocaisModo,
                     style: TextStyle(color: Colors.white60, fontSize: 13),
                   ),
                 ],
@@ -668,7 +647,7 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
 
           // 0.1 Versão e atualizações
           _buildCard(
-            title: 'Versão e Atualizações',
+            title: tr.versaoEAtualizacoes,
             icon: Icons.system_update_alt,
             iconColor: Colors.lightBlueAccent,
             child: Row(
@@ -676,33 +655,82 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
                 Expanded(
                   child: Text(
                     isReleaseBuild
-                        ? 'Chronos $appVersion — as atualizações são verificadas ao abrir o app.'
-                        : 'Chronos $appVersion (build de desenvolvimento — sem atualização automática).',
+                        ? tr.chronosP0AsAtualizacoesSaoVerificadas(appVersion)
+                        : tr.chronosP0BuildDeDesenvolvimentoSem(appVersion),
                     style: const TextStyle(fontSize: 13),
                   ),
                 ),
                 const SizedBox(width: 12),
                 OutlinedButton.icon(
                   icon: const Icon(Icons.refresh, size: 16),
-                  label: const Text('Procurar atualizações'),
+                  label: Text(tr.procurarAtualizacoes),
                   onPressed: () => checkAndPromptForUpdate(context, manual: true),
+                ),
+                const SizedBox(width: 8),
+                OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(foregroundColor: Colors.redAccent),
+                  icon: const Icon(Icons.delete_forever_outlined, size: 16),
+                  label: Text(tr.desinstalarChronos2),
+                  onPressed: () => showUninstallDialog(context),
                 ),
               ],
             ),
           ),
           const SizedBox(height: 16),
+          const HolidaysCard(),
+          const SizedBox(height: 16),
+          const AdultFilterCard(),
+          const SizedBox(height: 16),
+          const TamperLogCard(),
+          if (_onboardingState?.appMode == 'PARENTAL') ...[
+            const SizedBox(height: 16),
+            _buildAccountProtectionCard(),
+          ],
+          const SizedBox(height: 16),
 
           // 1. Notificações de Desktop
           _buildCard(
-            title: 'Notificações de Desktop',
+            title: tr.notificacoesDeDesktop,
             icon: Icons.notifications_active,
             iconColor: Colors.amberAccent,
             child: Column(
               children: [
+                FutureBuilder<bool>(
+                  future: _dndFuture ??= NotificationService.isDoNotDisturbOn(),
+                  builder: (context, snap) {
+                    if (snap.data != true) return const SizedBox.shrink();
+                    return Container(
+                      width: double.infinity,
+                      margin: const EdgeInsets.only(bottom: 8),
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: Colors.amber.shade900.withValues(alpha: 0.2),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: Colors.amber.withValues(alpha: 0.4)),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.do_not_disturb_on_outlined, color: Colors.amber, size: 18),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              tr.oModoNaoPerturbeDoSistema,
+                              style: TextStyle(fontSize: 12, color: Colors.amberAccent),
+                            ),
+                          ),
+                          TextButton(
+                            onPressed: () => setState(() => _dndFuture = NotificationService.isDoNotDisturbOn()),
+                            child: Text(tr.verificar),
+                          ),
+                        ],
+                      ),
+                    );
+                  },
+                ),
                 SwitchListTile(
-                  title: const Text('Notificar Início de App Monitorado'),
-                  subtitle: const Text(
-                    'Exibe uma notificação no desktop avisando que o app em execução está sendo cronometrado.',
+                  title: Text(tr.notificarInicioDeAppMonitorado),
+                  subtitle: Text(
+                    tr.exibeUmaNotificacaoNoDesktopAvisando,
                     style: TextStyle(color: Colors.white60, fontSize: 12),
                   ),
                   value: _notifications.notifyOnAppMonitored,
@@ -710,16 +738,16 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
                   onChanged: (val) {
                     setState(() => _notifications.notifyOnAppMonitored = val);
                     _showSnack(
-                      val ? 'Notificação de app monitorado ativada' : 'Notificação de app monitorado desativada',
+                      val ? tr.notificacaoDeAppMonitoradoAtivada : tr.notificacaoDeAppMonitoradoDesativada,
                       true,
                     );
                   },
                 ),
                 const Divider(color: Colors.white12, height: 1),
                 SwitchListTile(
-                  title: const Text('Alertas de Tempo de Tela Restante'),
-                  subtitle: const Text(
-                    'Avisos automáticos quando restarem 15m, 5m e 1m antes do término do tempo de tela diário.',
+                  title: Text(tr.alertasDeTempoDeTelaRestante),
+                  subtitle: Text(
+                    tr.avisosAutomaticosQuandoRestarem15m5m,
                     style: TextStyle(color: Colors.white60, fontSize: 12),
                   ),
                   value: _notifications.notifyRemaining,
@@ -730,9 +758,9 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
                 ),
                 const Divider(color: Colors.white12, height: 1),
                 SwitchListTile(
-                  title: const Text('Avisos Periódicos de Uso Ativo'),
-                  subtitle: const Text(
-                    'Lembretes em intervalos regulares (ex: a cada 15 min) com o tempo já utilizado.',
+                  title: Text(tr.avisosPeriodicosDeUsoAtivo),
+                  subtitle: Text(
+                    tr.lembretesEmIntervalosRegularesExA,
                     style: TextStyle(color: Colors.white60, fontSize: 12),
                   ),
                   value: _notifications.notifyPeriodic,
@@ -748,14 +776,14 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
 
           // 2. Extensões & Proteção dos Navegadores (Fluxo Unificado)
           _buildCard(
-            title: 'Extensões dos Navegadores (Bloqueio de Sites)',
+            title: tr.extensoesDosNavegadores,
             icon: Icons.extension,
             iconColor: Colors.blueAccent,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
-                  'Protege todos os navegadores do dispositivo offline: extensão local nos Chromium (Chrome, Chromium, Brave, Edge, Vivaldi, Opera) e Proxy Seletivo Focus + CA Local no Firefox.',
+                Text(
+                  tr.protegeTodosOsNavegadoresDoDispositivo,
                   style: TextStyle(color: Colors.white70, fontSize: 13, height: 1.4),
                 ),
                 const SizedBox(height: 12),
@@ -765,7 +793,10 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
                   browsers: _browsers,
                 ),
                 const SizedBox(height: 14),
-                const Text('Navegadores Detectados no Sistema:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.white)),
+                Text(
+                  tr.navegadoresDetectadosNoSistema,
+                  style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12, color: Colors.white),
+                ),
                 const SizedBox(height: 8),
                 BrowserStatusChipsWrap(
                   browsers: _browsers,
@@ -790,13 +821,13 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
                       borderRadius: BorderRadius.circular(8),
                       border: Border.all(color: Colors.amber.withValues(alpha: 0.4)),
                     ),
-                    child: const Row(
+                    child: Row(
                       children: [
                         Icon(Icons.info_outline, color: Colors.amber, size: 18),
                         SizedBox(width: 8),
                         Expanded(
                           child: Text(
-                            'Extensão removida após verificação Anti-Cheat. Clique abaixo para reinstalar em todos os navegadores.',
+                            tr.extensaoRemovidaAposVerificacaoAntiCheat,
                             style: TextStyle(fontSize: 12, color: Colors.amberAccent),
                           ),
                         ),
@@ -819,8 +850,8 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
                       : const Icon(Icons.security_update_good, size: 18),
                   label: Text(
                     _installingExtensions
-                        ? 'Configurando Navegadores & Guard...'
-                        : 'Instalar / Atualizar em Todos os Navegadores',
+                        ? tr.configurandoNavegadoresGuard
+                        : tr.instalarAtualizarEmTodosOsNavegadores,
                   ),
                   onPressed: _installingExtensions
                       ? null
@@ -847,6 +878,8 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
                   onShowFirefoxGuide: _showFirefoxGuideDialog,
                   onShowGuardTerminal: _showGuardInstallDialog,
                 ),
+                const Divider(height: 28),
+                _buildExtensionUpdateSection(),
               ],
             ),
           ),
@@ -856,9 +889,9 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
           _buildFocusFiltersCard(),
           const SizedBox(height: 16),
 
-          // 2.5 Proteção Permanente do Sistema (Anti-Burla & Remoção Anti-Cheat)
+          // 2.5 Proteção Permanente do Sistema (Anti-Burla & Remoção Anti-Burla)
           _buildCard(
-            title: 'Proteção Permanente do Sistema (Anti-Burla de Navegadores)',
+            title: tr.protecaoPermanenteDoSistemaAntiBurla,
             icon: Icons.security,
             iconColor: Colors.tealAccent,
             child: Column(
@@ -872,7 +905,7 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
                       borderRadius: BorderRadius.circular(8),
                       border: Border.all(color: Colors.tealAccent.withValues(alpha: 0.4)),
                     ),
-                    child: const Row(
+                    child: Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Icon(Icons.verified_user, color: Colors.tealAccent, size: 22),
@@ -882,14 +915,12 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                'Proteção do Sistema Ativa & Trancada',
+                                tr.protecaoDoSistemaAtivaTrancada,
                                 style: TextStyle(fontWeight: FontWeight.bold, color: Colors.tealAccent, fontSize: 13),
                               ),
                               SizedBox(height: 4),
                               Text(
-                                'Políticas forçadas ativas em Chrome/Chromium/Brave/Edge/Vivaldi/Opera (CRX3 assinado) '
-                                'e Firefox Release (Proxy Seletivo Focus + CA Local + PAC, sem avisos em about:policies). '
-                                'Remoção de extensão e navegação anônima estão bloqueadas.',
+                                tr.politicasForcadasAtivasEmChromeChromium,
                                 style: TextStyle(color: Colors.white70, fontSize: 12, height: 1.3),
                               ),
                             ],
@@ -906,16 +937,19 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
                       OutlinedButton.icon(
                         style: OutlinedButton.styleFrom(foregroundColor: Colors.tealAccent),
                         icon: const Icon(Icons.refresh, size: 16),
-                        label: const Text('Re-aplicar Políticas do Sistema'),
+                        label: Text(tr.reAplicarPoliticasDoSistema),
                         onPressed: () async {
                           final ok = await ChronosGuardService.applyPoliciesIfInstalled();
                           await _loadAll();
                           _showSnack(
-                            ok ? 'Políticas do sistema verificadas e re-aplicadas!' : 'Falha ao re-aplicar políticas.',
+                            ok ? tr.politicasDoSistemaVerificadasERe : tr.falhaAoReAplicarPoliticas,
                             ok,
                           );
                         },
                       ),
+                      // Release: the only way out is "Desinstalar Chronos" (removes everything);
+                      // removing just the extension is a dev-only tool.
+                      if (ChronosProfile.isDev)
                       OutlinedButton.icon(
                         style: OutlinedButton.styleFrom(
                           foregroundColor: Colors.redAccent,
@@ -928,11 +962,7 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
                                 child: CircularProgressIndicator(strokeWidth: 2, color: Colors.redAccent),
                               )
                             : const Icon(Icons.delete_forever_outlined, size: 16),
-                        label: Text(
-                          _removingExtensions
-                              ? 'Removendo...'
-                              : 'Remover Extensão (Verificar Anti-Cheat)',
-                        ),
+                        label: Text(_removingExtensions ? tr.removendo : tr.removerExtensaoVerificarAntiCheat),
                         onPressed: _removingExtensions ? null : _handleRemoveExtensionsWithAntiCheat,
                       ),
                     ],
@@ -940,8 +970,8 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
                 ] else ...[
                   Text(
                     _guardStatus?.isGuardOutdated == true
-                        ? 'O Chronos Guard instalado possui políticas antigas (ex.: ExtensionSettings sem assinatura no Firefox Release). Clique em "Instalar / Atualizar em Todos os Navegadores" acima para corrigir em 1 clique.'
-                        : 'O Chronos Guard grava políticas permanentes em /etc/ (com sua autorização Polkit) para impedir desinstalação manual e navegação anônima. Use o botão principal acima para ativar em 1 clique.',
+                        ? tr.oChronosGuardInstaladoPossuiPoliticas
+                        : tr.oChronosGuardGravaPoliticasPermanentes,
                     style: const TextStyle(color: Colors.white70, fontSize: 13, height: 1.4),
                   ),
                   const SizedBox(height: 12),
@@ -954,8 +984,8 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
                         icon: const Icon(Icons.admin_panel_settings, size: 16),
                         label: Text(
                           _guardStatus?.isGuardOutdated == true
-                              ? 'Atualizar Guard via Polkit (1 Clique)'
-                              : 'Ativar Guard via Polkit (1 Clique)',
+                              ? tr.atualizarGuardViaPolkit1Clique
+                              : tr.ativarGuardViaPolkit1Clique,
                         ),
                         onPressed: _installingExtensions
                             ? null
@@ -974,7 +1004,7 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
                                 }
                               },
                       ),
-                      if (!_extensionsRemovedByUser)
+                      if (!_extensionsRemovedByUser && ChronosProfile.isDev)
                         OutlinedButton.icon(
                           style: OutlinedButton.styleFrom(
                             foregroundColor: Colors.redAccent,
@@ -987,7 +1017,7 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
                                   child: CircularProgressIndicator(strokeWidth: 2, color: Colors.redAccent),
                                 )
                               : const Icon(Icons.delete_forever_outlined, size: 16),
-                          label: const Text('Remover Extensão (Verificar Anti-Cheat)'),
+                          label: Text(tr.removerExtensaoVerificarAntiCheat),
                           onPressed: _removingExtensions ? null : _handleRemoveExtensionsWithAntiCheat,
                         ),
                     ],
@@ -1000,7 +1030,7 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
 
           // 3. Modo do Aplicativo
           _buildCard(
-            title: 'Modo do Aplicativo & Cadastro',
+            title: tr.modoDoAplicativoCadastro,
             icon: Icons.psychology,
             iconColor: Colors.purpleAccent,
             child: Column(
@@ -1013,14 +1043,14 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'Modo Ativo: ${_onboardingState?.appMode == "PARENTAL" ? "Controle Parental" : "Auto-Controle"}',
+                          tr.modoAtivoP0(_onboardingState?.appMode == "PARENTAL" ? "Controle Parental" : "Auto-Controle"),
                           style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
                         ),
                         const SizedBox(height: 4),
                         Text(
                           _onboardingState?.appMode == 'PARENTAL'
-                              ? 'Configurado com PIN e proteção parental de restrições.'
-                              : 'Focado em autonomia, comprometimento pessoal e produtividade.',
+                              ? tr.configuradoComPinEProtecaoParental
+                              : tr.focadoEmAutonomiaComprometimentoPessoalE,
                           style: const TextStyle(color: Colors.white60, fontSize: 12),
                         ),
                       ],
@@ -1028,18 +1058,14 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
 
                     final button = OutlinedButton.icon(
                       icon: const Icon(Icons.restart_alt, size: 16),
-                      label: const Text('Trocar Modo / Refazer Cadastro'),
+                      label: Text(tr.trocarModoRefazerCadastro),
                       onPressed: widget.onResetOnboarding,
                     );
 
                     if (isNarrow) {
                       return Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          textColumn,
-                          const SizedBox(height: 12),
-                          button,
-                        ],
+                        children: [textColumn, const SizedBox(height: 12), button],
                       );
                     }
 
@@ -1058,9 +1084,9 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
           ),
           const SizedBox(height: 16),
 
-          // 4. Anti-Cheat & Travamento
+          // 4. Anti-Burla & Travamento
           _buildCard(
-            title: 'Anti-Cheat & Proteção Contra Burlar',
+            title: tr.antiCheatProtecaoContraBurlar,
             icon: Icons.shield,
             iconColor: Colors.deepOrangeAccent,
             child: Column(
@@ -1076,9 +1102,9 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
                           Text(
                             _antiCheatState?.isActive == true
                                 ? (_antiCheatState?.mode == 'NUKE'
-                                    ? 'Modo Nuke Ativo (${_antiCheatState?.nukeRemainingSeconds}s restantes)'
-                                    : 'Anti-Cheat Ativo (Desafio StayFocusd)')
-                                : 'Anti-Cheat Desativado',
+                                      ? tr.modoNukeAtivoP0SRestantes(_antiCheatState?.nukeRemainingSeconds ?? 0)
+                                      : tr.antiCheatAtivoDesafioStayfocusd)
+                                : tr.antiCheatDesativado,
                             style: TextStyle(
                               fontWeight: FontWeight.bold,
                               fontSize: 14,
@@ -1086,8 +1112,8 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
                             ),
                           ),
                           const SizedBox(height: 4),
-                          const Text(
-                            'Bloqueia modificações de regras, aumento de limites nos momentos de fraqueza e remoção de extensões.',
+                          Text(
+                            tr.bloqueiaModificacoesDeRegrasAumentoDe,
                             style: TextStyle(color: Colors.white60, fontSize: 12),
                           ),
                         ],
@@ -1096,10 +1122,12 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
                     const SizedBox(width: 12),
                     FilledButton.icon(
                       style: FilledButton.styleFrom(
-                        backgroundColor: _antiCheatState?.isActive == true ? Colors.deepOrange.shade800 : Colors.teal.shade800,
+                        backgroundColor: _antiCheatState?.isActive == true
+                            ? Colors.deepOrange.shade800
+                            : Colors.teal.shade800,
                       ),
                       icon: const Icon(Icons.security, size: 16),
-                      label: Text(_antiCheatState?.isActive == true ? 'Gerenciar Anti-Cheat' : 'Ativar Anti-Cheat'),
+                      label: Text(_antiCheatState?.isActive == true ? tr.gerenciarAntiCheat : tr.ativarAntiCheat),
                       onPressed: () {
                         showDialog(
                           context: context,
@@ -1114,21 +1142,30 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
                     ),
                   ],
                 ),
+                const SizedBox(height: 8),
+                OutlinedButton.icon(
+                  icon: const Icon(Icons.edit_note, size: 16),
+                  label: Text(tr.textosDoDesafio),
+                  onPressed: _antiCheatState?.isActive == true
+                      ? () => _showSnack(tr.antiBurlaAtivoOsTextosDo, false)
+                      : _editChallengeTexts,
+                ),
               ],
             ),
           ),
           const SizedBox(height: 16),
 
-          // 5. Dados & Resets
+          // 5. Dados & Resets (dev only: in release they would reset screen time and rules)
+          if (ChronosProfile.isDev)
           _buildCard(
-            title: 'Gerenciamento de Dados Locais (Offline)',
+            title: tr.gerenciamentoDeDadosLocaisOffline,
             icon: Icons.storage,
             iconColor: Colors.cyanAccent,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text(
-                  'Todas as informações, regras e tempos de tela do Chronos são armazenados 100% localmente no seu computador.',
+                Text(
+                  tr.todasAsInformacoesRegrasETempos,
                   style: TextStyle(color: Colors.white60, fontSize: 12),
                 ),
                 const SizedBox(height: 12),
@@ -1138,7 +1175,7 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
                   children: [
                     FilledButton.tonalIcon(
                       icon: const Icon(Icons.history_toggle_off, size: 16),
-                      label: const Text('Zerar Consumo Diário de Hoje'),
+                      label: Text(tr.zerarConsumoDiarioDeHoje),
                       onPressed: () async {
                         final res = await resetDailyUsage();
                         _showSnack(res.message, res.success);
@@ -1148,21 +1185,21 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
                     OutlinedButton.icon(
                       style: OutlinedButton.styleFrom(foregroundColor: Colors.redAccent),
                       icon: const Icon(Icons.restore, size: 16),
-                      label: const Text('Reiniciar Banco de Dados Completo'),
+                      label: Text(tr.reiniciarBancoDeDadosCompleto),
                       onPressed: () async {
                         final confirm = await showDialog<bool>(
                           context: context,
                           builder: (ctx) => AlertDialog(
-                            title: const Text('Reiniciar Banco de Dados'),
-                            content: const Text(
-                              'Atenção: Isso irá apagar todas as regras de bloqueio criadas e redefinir o banco para o estado inicial. Deseja continuar?',
+                            title: Text(tr.reiniciarBancoDeDados2),
+                            content: Text(
+                              tr.atencaoIssoIraApagarTodasAs,
                             ),
                             actions: [
-                              TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancelar')),
+                              TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(tr.cancelar)),
                               FilledButton(
                                 style: FilledButton.styleFrom(backgroundColor: Colors.redAccent),
                                 onPressed: () => Navigator.pop(ctx, true),
-                                child: const Text('Zerar Tudo'),
+                                child: Text(tr.zerarTudo),
                               ),
                             ],
                           ),
@@ -1192,11 +1229,11 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Row(
+        title: Row(
           children: [
             Icon(Icons.admin_panel_settings, color: Colors.tealAccent),
             SizedBox(width: 8),
-            Text('Instalar Proteção Permanente'),
+            Text(tr.instalarProtecaoPermanente),
           ],
         ),
         content: ConstrainedBox(
@@ -1205,16 +1242,18 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
-                'Esta etapa configura os arquivos de política oficiais em /etc/ e ativa o serviço do systemd para travar as extensões em definitivo contra burla.',
+              Text(
+                tr.estaEtapaConfiguraOsArquivosDe,
                 style: TextStyle(fontSize: 12, color: Colors.white70, height: 1.4),
               ),
               const SizedBox(height: 12),
-              const Text('Como deseja prosseguir?', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.tealAccent)),
+              Text(
+                tr.comoDesejaProsseguir,
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.tealAccent),
+              ),
               const SizedBox(height: 10),
-              const Text(
-                'Opção 1: Clique em "Abrir Terminal" para abrir uma janela onde você digita sua senha do sudo UMA vez.\n'
-                'Opção 2: Ou copie o comando abaixo e execute no seu terminal favorito:',
+              Text(
+                tr.opcao1CliqueEmAbrirTerminal,
                 style: TextStyle(fontSize: 12, color: Colors.white70, height: 1.4),
               ),
               const SizedBox(height: 12),
@@ -1236,12 +1275,12 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
                     ),
                     IconButton(
                       icon: const Icon(Icons.copy, size: 16, color: Colors.tealAccent),
-                      tooltip: 'Copiar Comando',
+                      tooltip: tr.copiarComando,
                       onPressed: () {
                         Clipboard.setData(ClipboardData(text: cmd));
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Comando copiado para a área de transferência!')),
-                        );
+                        ScaffoldMessenger.of(
+                          context,
+                        ).showSnackBar(SnackBar(content: Text(tr.comandoCopiadoParaAAreaDe)));
                       },
                     ),
                   ],
@@ -1251,13 +1290,10 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
           ),
         ),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Fechar'),
-          ),
+          TextButton(onPressed: () => Navigator.pop(ctx), child: Text(tr.fechar)),
           OutlinedButton.icon(
             icon: const Icon(Icons.refresh, size: 16),
-            label: const Text('Verificar Status'),
+            label: Text(tr.verificarStatus),
             onPressed: () async {
               await _loadAll();
               if (ctx.mounted) {
@@ -1266,8 +1302,8 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
               if (mounted) {
                 _showSnack(
                   _guardStatus?.isFullyActive == true
-                      ? 'Proteção do sistema ativa e confirmada!'
-                      : 'Proteção ainda pendente de instalação.',
+                      ? tr.protecaoDoSistemaAtivaEConfirmada
+                      : tr.protecaoAindaPendenteDeInstalacao,
                   _guardStatus?.isFullyActive == true,
                 );
               }
@@ -1276,15 +1312,15 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
           FilledButton.icon(
             style: FilledButton.styleFrom(backgroundColor: Colors.teal.shade700),
             icon: const Icon(Icons.terminal, size: 16),
-            label: const Text('Abrir Terminal'),
+            label: Text(tr.abrirTerminal),
             onPressed: () async {
               final launched = await ChronosGuardService.launchInstallerInTerminal();
               if (mounted) {
                 if (launched) {
-                  _showSnack('Terminal aberto! Digite sua senha na janela para concluir.', true);
+                  _showSnack(tr.terminalAbertoDigiteSuaSenhaNa, true);
                 } else {
                   Clipboard.setData(ClipboardData(text: cmd));
-                  _showSnack('Não foi possível abrir o terminal automaticamente. Comando copiado!', false);
+                  _showSnack(tr.naoFoiPossivelAbrirOTerminal, false);
                 }
               }
             },
@@ -1301,11 +1337,11 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Row(
+        title: Row(
           children: [
             Icon(Icons.extension, color: Colors.blueAccent),
             SizedBox(width: 8),
-            Text('Ativar no Google Chrome'),
+            Text(tr.ativarNoGoogleChrome),
           ],
         ),
         content: ConstrainedBox(
@@ -1321,14 +1357,14 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
                   borderRadius: BorderRadius.circular(8),
                   border: Border.all(color: Colors.blueAccent.withValues(alpha: 0.3)),
                 ),
-                child: const Row(
+                child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Icon(Icons.info_outline, color: Colors.blueAccent, size: 20),
                     SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        'O Google Chrome oficial bloqueia injeções ocultas por linha de comando por segurança. Para ativá-la, basta carregar a pasta local uma única vez (leva 10 segundos).',
+                        tr.oGoogleChromeOficialBloqueiaInjecoes,
                         style: TextStyle(fontSize: 12, color: Colors.white70, height: 1.4),
                       ),
                     ),
@@ -1336,15 +1372,21 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
                 ),
               ),
               const SizedBox(height: 16),
-              const Text('Passo a passo rápido:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.tealAccent)),
+              Text(
+                tr.passoAPassoRapido,
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.tealAccent),
+              ),
               const SizedBox(height: 10),
-              _buildStepItem('1', 'Clique no botão "Abrir Chrome" abaixo. O Chrome abrirá em chrome://extensions e o caminho da pasta será copiado.'),
+              _buildStepItem(
+                '1',
+                tr.cliqueNoBotaoAbrirChromeAbaixo,
+              ),
               const SizedBox(height: 8),
-              _buildStepItem('2', 'No Chrome, ative a chave "Modo do desenvolvedor" no canto superior direito.'),
+              _buildStepItem('2', tr.noChromeAtiveAChaveModo),
               const SizedBox(height: 8),
-              _buildStepItem('3', 'Clique no botão "Carregar sem compactação" (canto superior esquerdo).'),
+              _buildStepItem('3', tr.cliqueNoBotaoCarregarSemCompactacao),
               const SizedBox(height: 8),
-              _buildStepItem('4', 'Pressione Ctrl+V ou selecione a pasta da extensão e confirme.'),
+              _buildStepItem('4', tr.pressioneCtrlVOuSelecioneA),
               const SizedBox(height: 14),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
@@ -1364,12 +1406,12 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
                     ),
                     IconButton(
                       icon: const Icon(Icons.copy, size: 16, color: Colors.tealAccent),
-                      tooltip: 'Copiar Caminho',
+                      tooltip: tr.copiarCaminho,
                       onPressed: () {
                         Clipboard.setData(ClipboardData(text: path));
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Caminho copiado para a área de transferência!')),
-                        );
+                        ScaffoldMessenger.of(
+                          context,
+                        ).showSnackBar(SnackBar(content: Text(tr.caminhoCopiadoParaAAreaDe)));
                       },
                     ),
                   ],
@@ -1379,21 +1421,16 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
           ),
         ),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Fechar'),
-          ),
+          TextButton(onPressed: () => Navigator.pop(ctx), child: Text(tr.fechar)),
           OutlinedButton.icon(
             icon: const Icon(Icons.download, size: 16),
-            label: const Text('Baixar .zip'),
+            label: Text(tr.baixarZip),
             onPressed: () async {
               final zip = await BrowserExtensionInstaller.exportExtensionZipToDownloads();
               if (mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
-                    content: Text(zip != null
-                        ? 'Arquivo salvo em: $zip'
-                        : 'Erro ao gerar zip para Downloads.'),
+                    content: Text(zip != null ? tr.arquivoSalvoEmP0(zip) : tr.erroAoGerarZipParaDownloads),
                     backgroundColor: zip != null ? Colors.teal.shade700 : Colors.red.shade800,
                   ),
                 );
@@ -1403,14 +1440,14 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
           FilledButton.icon(
             style: FilledButton.styleFrom(backgroundColor: Colors.blueAccent.shade700),
             icon: const Icon(Icons.open_in_browser, size: 16),
-            label: const Text('Abrir Chrome'),
+            label: Text(tr.abrirChrome),
             onPressed: () async {
               await Clipboard.setData(ClipboardData(text: path));
               await BrowserExtensionInstaller.launchGoogleChromeWithExtensionGuide();
               if (mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Chrome aberto! Caminho copiado para a área de transferência.'),
+                  SnackBar(
+                    content: Text(tr.chromeAbertoCaminhoCopiadoParaA),
                     backgroundColor: Colors.teal,
                   ),
                 );
@@ -1430,11 +1467,11 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
       builder: (ctx) => AlertDialog(
         backgroundColor: const Color(0xFF161922),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        title: const Row(
+        title: Row(
           children: [
             Icon(Icons.extension, color: Colors.orangeAccent),
             SizedBox(width: 10),
-            Text('Ativar Extensão no Firefox', style: TextStyle(color: Colors.white, fontSize: 17)),
+            Text(tr.ativarExtensaoNoFirefox, style: TextStyle(color: Colors.white, fontSize: 17)),
           ],
         ),
         content: SizedBox(
@@ -1443,16 +1480,19 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
-                'No Firefox Release padrão, a Mozilla exige assinatura para .xpi externos — por isso a proteção permanente do Chronos funciona pelo Proxy Seletivo Local + Certificado CA via Chronos Guard. Para Firefox ESR/Dev/LibreWolf/Zen ou testes temporários em about:debugging, use o .xpi:',
+              Text(
+                tr.noFirefoxReleasePadraoAMozilla,
                 style: TextStyle(color: Colors.white70, fontSize: 13),
               ),
               const SizedBox(height: 14),
-              _buildStepItem('1', 'Clique no botão "Abrir Firefox" abaixo para ir direto à aba de depuração.'),
+              _buildStepItem('1', tr.cliqueNoBotaoAbrirFirefoxAbaixo),
               const SizedBox(height: 8),
-              _buildStepItem('2', 'Clique no botão "Carregar extensão temporária...".'),
+              _buildStepItem('2', tr.cliqueNoBotaoCarregarExtensaoTemporaria),
               const SizedBox(height: 8),
-              _buildStepItem('3', 'Selecione o arquivo "manifest.json" na pasta abaixo ou o arquivo .xpi em ~/Downloads.'),
+              _buildStepItem(
+                '3',
+                tr.selecioneOArquivoManifestJsonNa,
+              ),
               const SizedBox(height: 14),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
@@ -1472,12 +1512,11 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
                     ),
                     IconButton(
                       icon: const Icon(Icons.copy, size: 16, color: Colors.orangeAccent),
-                      tooltip: 'Copiar Caminho',
+                      tooltip: tr.copiarCaminho,
                       onPressed: () {
                         Clipboard.setData(ClipboardData(text: manifestPath));
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Caminho do manifest.json copiado!')),
-                        );
+                        ScaffoldMessenger.of(context)
+                            .showSnackBar(SnackBar(content: Text(tr.caminhoDoManifestJsonCopiado)));
                       },
                     ),
                   ],
@@ -1487,10 +1526,7 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
           ),
         ),
         actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Fechar'),
-          ),
+          TextButton(onPressed: () => Navigator.pop(ctx), child: Text(tr.fechar)),
           OutlinedButton.icon(
             icon: const Icon(Icons.download, size: 16),
             label: const Text('Baixar .xpi'),
@@ -1499,9 +1535,7 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
               if (mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(
-                    content: Text(xpi != null
-                        ? 'Arquivo salvo em: $xpi'
-                        : 'Erro ao gerar xpi para Downloads.'),
+                    content: Text(xpi != null ? tr.arquivoSalvoEmP0(xpi) : tr.erroAoGerarXpiParaDownloads),
                     backgroundColor: xpi != null ? Colors.teal.shade700 : Colors.red.shade800,
                   ),
                 );
@@ -1511,14 +1545,14 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
           FilledButton.icon(
             style: FilledButton.styleFrom(backgroundColor: Colors.orange.shade800),
             icon: const Icon(Icons.open_in_browser, size: 16),
-            label: const Text('Abrir Firefox'),
+            label: Text(tr.abrirFirefox),
             onPressed: () async {
               await Clipboard.setData(ClipboardData(text: manifestPath));
               await BrowserExtensionInstaller.launchFirefoxWithExtensionGuide();
               if (mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Firefox aberto! Caminho copiado para a área de transferência.'),
+                  SnackBar(
+                    content: Text(tr.firefoxAbertoCaminhoCopiadoParaA),
                     backgroundColor: Colors.teal,
                   ),
                 );
@@ -1538,11 +1572,11 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
           width: 20,
           height: 20,
           alignment: Alignment.center,
-          decoration: const BoxDecoration(
-            color: Colors.blueAccent,
-            shape: BoxShape.circle,
+          decoration: const BoxDecoration(color: Colors.blueAccent, shape: BoxShape.circle),
+          child: Text(
+            number,
+            style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.white),
           ),
-          child: Text(number, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.white)),
         ),
         const SizedBox(width: 8),
         Expanded(
@@ -1556,36 +1590,25 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return _buildCard(
-      title: 'Aparência & Modo de Tema',
+      title: tr.aparenciaModoDeTema,
       icon: Icons.palette_outlined,
       iconColor: Colors.cyanAccent,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Personalize o tema visual do Chronos. O Modo Claro é otimizado para ambientes claros com alto contraste, e o Modo Escuro reduz o cansaço visual.',
-            style: TextStyle(
-              color: isDark ? Colors.white70 : Colors.black87,
-              fontSize: 13,
-            ),
+            tr.personalizeOTemaVisualDoChronos,
+            style: TextStyle(color: isDark ? Colors.white70 : Colors.black87, fontSize: 13),
           ),
           const SizedBox(height: 14),
           SegmentedButton<String>(
-            segments: const [
-              ButtonSegment(
-                value: 'dark',
-                icon: Icon(Icons.dark_mode_outlined, size: 18),
-                label: Text('Modo Escuro'),
-              ),
-              ButtonSegment(
-                value: 'light',
-                icon: Icon(Icons.light_mode_outlined, size: 18),
-                label: Text('Modo Claro'),
-              ),
+            segments: [
+              ButtonSegment(value: 'dark', icon: Icon(Icons.dark_mode_outlined, size: 18), label: Text(tr.modoEscuro)),
+              ButtonSegment(value: 'light', icon: Icon(Icons.light_mode_outlined, size: 18), label: Text(tr.modoClaro)),
               ButtonSegment(
                 value: 'system',
                 icon: Icon(Icons.settings_brightness_outlined, size: 18),
-                label: Text('Sistema'),
+                label: Text(tr.sistema),
               ),
             ],
             selected: {_currentTheme},
@@ -1597,41 +1620,296 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
           ),
           const SizedBox(height: 18),
           Text(
-            'Idioma Principal (Tags & Autocomplete Steam API)',
-            style: TextStyle(
-              color: isDark ? Colors.white : Colors.black87,
-              fontWeight: FontWeight.w600,
-              fontSize: 13,
-            ),
+            tr.idiomaPrincipalTagsAutocompleteSteamApi,
+            style: TextStyle(color: isDark ? Colors.white : Colors.black87, fontWeight: FontWeight.w600, fontSize: 13),
           ),
           const SizedBox(height: 4),
           Text(
-            'As tags são enviadas em inglês para a Steam API e exibidas aqui e nas extensões no seu idioma selecionado.',
-            style: TextStyle(
-              color: isDark ? Colors.white60 : Colors.black54,
-              fontSize: 12,
-            ),
+            tr.asTagsSaoEnviadasEmIngles,
+            style: TextStyle(color: isDark ? Colors.white60 : Colors.black54, fontSize: 12),
           ),
           const SizedBox(height: 10),
-          SegmentedButton<String>(
-            segments: const [
-              ButtonSegment(
-                value: 'pt-BR',
-                icon: Icon(Icons.translate_outlined, size: 17),
-                label: Text('Português (BR)'),
-              ),
-              ButtonSegment(
-                value: 'en-US',
-                icon: Icon(Icons.language_outlined, size: 17),
-                label: Text('English (US)'),
-              ),
+          DropdownButtonFormField<String>(
+            initialValue: kAppLanguages.any((l) => l.$1 == _primaryLanguage) ? _primaryLanguage : 'pt-BR',
+            isDense: true,
+            decoration: const InputDecoration(
+              prefixIcon: Icon(Icons.translate_outlined, size: 18),
+              border: OutlineInputBorder(),
+              isDense: true,
+            ),
+            items: [
+              for (final (code, label) in kAppLanguages) DropdownMenuItem(value: code, child: Text(label)),
             ],
-            selected: {_primaryLanguage},
-            onSelectionChanged: (val) {
-              if (val.isNotEmpty) {
-                _changePrimaryLanguage(val.first);
-              }
+            onChanged: (val) {
+              if (val != null) _changePrimaryLanguage(val);
             },
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Highest installed Chronos extension version per Chromium-family browser profile.
+  static Map<String, String> _installedChromiumExtensionVersions() {
+    final home = Platform.environment['HOME'] ?? '';
+    final out = <String, String>{};
+    final browsers = {
+      'Chrome': '.config/google-chrome',
+      'Chromium': '.config/chromium',
+      'Brave': '.config/BraveSoftware/Brave-Browser',
+    };
+    for (final entry in browsers.entries) {
+      final root = Directory('$home/${entry.value}');
+      if (!root.existsSync()) continue;
+      String? best;
+      for (final profile in root.listSync().whereType<Directory>()) {
+        final extDir = Directory('${profile.path}/Extensions/${ChronosGuardService.extensionId}');
+        if (!extDir.existsSync()) continue;
+        for (final v in extDir.listSync().whereType<Directory>()) {
+          final ver = v.uri.pathSegments.where((s) => s.isNotEmpty).last.split('_').first;
+          if (best == null || compareVersions(a: ver, b: best) > 0) best = ver;
+        }
+      }
+      if (best != null) out[entry.key] = best;
+    }
+    return out;
+  }
+
+  /// Parental mode: a child account with admin rights can remove Chronos as root.
+  Widget _buildAccountProtectionCard() {
+    final st = ChronosGuardService.accountProtectionStatus();
+    final ok = st.isProtected || !st.isAdmin;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(children: [
+              Icon(ok ? Icons.verified_user : Icons.admin_panel_settings,
+                  color: ok ? Colors.tealAccent : Colors.orangeAccent, size: 20),
+              const SizedBox(width: 8),
+              Text(tr.contaDaCriancaProtegida, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+            ]),
+            const SizedBox(height: 6),
+            Text(
+              st.isProtected
+                  ? tr.contaProtegidaDescricao(st.user)
+                  : st.isAdmin
+                      ? tr.contaEhAdministradoraAviso(st.user)
+                      : tr.contaSemAdministrador(st.user),
+              style: const TextStyle(fontSize: 12, color: Colors.white70),
+            ),
+            const SizedBox(height: 10),
+            if (st.isAdmin || st.isProtected)
+              OutlinedButton.icon(
+                icon: Icon(st.isProtected ? Icons.lock_open : Icons.lock, size: 16),
+                label: Text(st.isProtected ? tr.devolverAdministrador : tr.protegerEstaConta),
+                onPressed: () async {
+                  final err = await ChronosGuardService.setAccountProtection(!st.isProtected);
+                  _showSnack(err ?? tr.feitoValeNoProximoLogin, err == null);
+                  if (mounted) setState(() {});
+                },
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Chronos add-on version installed in Firefox (newest across profiles).
+  static String? _installedFirefoxExtensionVersion() {
+    final home = Platform.environment['HOME'] ?? '';
+    String? best;
+    for (final base in [
+      '$home/.mozilla/firefox',
+      '$home/.config/mozilla/firefox',
+      '$home/snap/firefox/common/.mozilla/firefox', // Ubuntu snap
+    ]) {
+      final root = Directory(base);
+      if (!root.existsSync()) continue;
+      for (final profile in root.listSync().whereType<Directory>()) {
+        final f = File('${profile.path}/extensions.json');
+        if (!f.existsSync()) continue;
+        try {
+          final addons = (jsonDecode(f.readAsStringSync()) as Map)['addons'] as List;
+          for (final a in addons) {
+            if (a is Map && a['id'] == 'chronos-focus@chronos.local') {
+              final v = a['version']?.toString() ?? '';
+              if (v.isNotEmpty && (best == null || compareVersions(a: v, b: best) > 0)) best = v;
+            }
+          }
+        } catch (_) {}
+      }
+    }
+    return best;
+  }
+
+  /// Browser extensions follow app updates automatically (toggle) or on demand.
+  /// Own challenge texts (one per block, separated by a blank line). They are drawn
+  /// together with the built-in texts whenever the challenge mode is activated.
+  Future<void> _editChallengeTexts() async {
+    final msg = await showDialog<String>(context: context, builder: (_) => const ChallengeTextsDialog());
+    if (msg != null && msg.isNotEmpty) _showSnack(msg, true);
+  }
+
+  /// Version / auto-update part of the browser extensions card.
+  Widget _buildExtensionUpdateSection() {
+    final status = getExtensionUpdateStatus();
+    final installed = _installedChromiumExtensionVersions();
+    // Live version reported by the extension itself (< 2 min old) beats profile files.
+    const names = {
+      'chrome': 'Chrome', 'chromium': 'Chromium', 'brave': 'Brave', 'edge': 'Edge',
+      'opera': 'Opera', 'vivaldi': 'Vivaldi', 'firefox': 'Firefox',
+    };
+    try {
+      for (final r in getExtensionReports()) {
+        if (r.ageSeconds.toInt() > 120 || r.version.isEmpty) continue;
+        installed[names[r.browser] ?? r.browser] = r.version;
+      }
+    } catch (_) {}
+    final firefox = installed.remove('Firefox') ?? _installedFirefoxExtensionVersion();
+    String line(String browser, String version, String latest) {
+      final upToDate = latest.isEmpty || compareVersions(a: version, b: latest) >= 0;
+      return '$browser: $version ${upToDate ? tr.extVersaoAtualizada : tr.extVersaoPendente(latest)}';
+    }
+    final lines = [
+      for (final e in installed.entries) line(e.key, e.value, status.latestVersion),
+      // Firefox only installs Mozilla-signed versions: compare with the signed one.
+      if (firefox != null)
+        status.firefoxLatestVersion.isEmpty || compareVersions(a: status.firefoxLatestVersion, b: firefox) <= 0
+            ? (compareVersions(a: firefox, b: status.latestVersion) >= 0
+                ? line('Firefox', firefox, '')
+                : 'Firefox: $firefox ${tr.extFirefoxPrecisaAssinar(status.latestVersion)}')
+            : line('Firefox', firefox, status.firefoxLatestVersion),
+    ];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(tr.atualizacoesDaExtensao, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: Text(tr.atualizarExtensoesAutomaticamente, style: TextStyle(fontSize: 14)),
+          subtitle: Text(
+            tr.quandoOChronosForAtualizadoOs,
+            style: TextStyle(fontSize: 12),
+          ),
+          value: status.autoUpdate,
+          onChanged: (v) async {
+            await setExtensionAutoUpdate(enabled: v);
+            if (mounted) setState(() {});
+          },
+        ),
+        Text(
+          [
+            tr.extVersaoDisponivel(status.latestVersion.isEmpty ? '—' : status.latestVersion),
+            ...lines,
+          ].join('\n'),
+          style: const TextStyle(fontSize: 12, color: Colors.white70, height: 1.5),
+        ),
+        const SizedBox(height: 8),
+        OutlinedButton.icon(
+          icon: const Icon(Icons.system_update, size: 16),
+          label: Text(tr.atualizarExtensoesAgora),
+          onPressed: () async {
+            await requestExtensionUpdateNow();
+            _showSnack(tr.pedidoEnviadoOChromeInstalaA, true);
+            Future.delayed(const Duration(seconds: 15), () {
+              if (mounted) setState(() {});
+            });
+          },
+        ),
+      ],
+    );
+  }
+
+  /// YouTube "Mostrar apenas": only videos of the chosen types appear on the home feed
+  /// and related list; disallowed Shorts are skipped. Search still shows everything.
+  Widget _buildYoutubeShowOnlySection(FocusFiltersDto filters) {
+    final types = getYoutubeContentTypes();
+    final selected = filters.ytShowOnlyTypes.map((t) => t.toLowerCase()).toSet();
+
+    void setTypes(Set<String> next) {
+      final list = next.toList()..sort();
+      _toggleFocusFilter(ytShowOnlyTypes: list, ytShowOnlyEnabled: list.isEmpty ? false : filters.ytShowOnlyEnabled);
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 4, bottom: 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _buildFilterSwitch(
+            title: tr.mostrarApenasVideosDestesTipos,
+            subtitle: selected.isEmpty ? tr.escolhaAoMenosUmTipoAbaixo : tr.aHomeEOsRelacionadosSo,
+            icon: Icons.filter_alt_outlined,
+            value: filters.ytShowOnlyEnabled,
+            onChanged: (val) {
+              if (val && selected.isEmpty) {
+                _showSnack(tr.escolhaAoMenosUmTipoAntes, false);
+                return;
+              }
+              _toggleFocusFilter(ytShowOnlyEnabled: val);
+            },
+          ),
+          Padding(
+            padding: const EdgeInsets.only(left: 12, right: 12, bottom: 6),
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 6,
+              children: [
+                for (final t in types)
+                  FilterChip(
+                    label: Text(t.label),
+                    selected: selected.contains(t.id),
+                    onSelected: (on) {
+                      final next = {...selected};
+                      on ? next.add(t.id) : next.remove(t.id);
+                      setTypes(next);
+                    },
+                  ),
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: Wrap(
+              spacing: 8,
+              runSpacing: 6,
+              children: [
+                OutlinedButton.icon(
+                  icon: const Icon(Icons.download, size: 16),
+                  label: Text(tr.importarDaListaBranca),
+                  onPressed: () async {
+                    final imported = <String>{};
+                    for (final g in await getAllWhitelistGroups()) {
+                      try {
+                        final decoded = jsonDecode(g.items);
+                        if (decoded is Map && decoded['yt_types'] is List) {
+                          for (final t in decoded['yt_types']) {
+                            final id = t is String ? t : (t is Map ? (t['type'] ?? '').toString() : '');
+                            if (id.isNotEmpty) imported.add(id.toLowerCase());
+                          }
+                        }
+                      } catch (_) {}
+                    }
+                    if (imported.isEmpty) {
+                      _showSnack(tr.nenhumTipoDoYoutubeNaLista, false);
+                      return;
+                    }
+                    setTypes({...selected, ...imported});
+                  },
+                ),
+                OutlinedButton.icon(
+                  icon: const Icon(Icons.tune, size: 16),
+                  label: Text(tr.tiposPorCanalPalavra),
+                  onPressed: () async {
+                    await showDialog<void>(context: context, builder: (_) => const YoutubeCustomTypesDialog());
+                    if (mounted) setState(() {});
+                  },
+                ),
+              ],
+            ),
           ),
         ],
       ),
@@ -1645,151 +1923,225 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
     final safeScale = filters.hudScale.isFinite ? filters.hudScale.clamp(0.70, 1.60) : 1.0;
 
     return _buildCard(
-      title: 'Filtros de Conteúdo & Anti-Distração por Plataforma (Estilo StayFocusd)',
+      title: tr.filtrosDeConteudoAntiDistracaoPor,
       icon: Icons.filter_alt_outlined,
       iconColor: Colors.deepPurpleAccent,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Configure filtros de CSS e HTML específicos para cada aplicativo ou rede social. Elimine gatilhos de dopamina sem precisar bloquear os sites por completo.',
-            style: TextStyle(
-              color: isDark ? Colors.white70 : Colors.black87,
-              fontSize: 13,
-            ),
+            tr.configureFiltrosDeCssEHtml,
+            style: TextStyle(color: isDark ? Colors.white70 : Colors.black87, fontSize: 13),
           ),
           const SizedBox(height: 16),
 
           // 🌐 DETOX GLOBAL (PRIMEIRO)
-          _buildPlatformHeader('Detox Global (Todos os Sites)', Icons.public, Colors.tealAccent),
-          _buildFilterSwitch(
-            title: 'Modo Preto e Branco (Grayscale Detox)',
-            subtitle: 'Aplica escala de cinza em todas as páginas para desestimular consumo compulsivo visual.',
-            icon: Icons.monochrome_photos,
-            value: filters.globalGrayscale,
-            onChanged: (val) => _toggleFocusFilter(globalGrayscale: val),
+          _buildPlatformSection(
+            id: 'global',
+            title: tr.detoxGlobalTodosOsSites,
+            icon: Icons.public,
+            color: Colors.tealAccent,
+            values: [filters.globalGrayscale, filters.globalBlockNotifications],
+            onAll: (v) => _toggleFocusFilter(globalGrayscale: v, globalBlockNotifications: v),
+            children: [
+              _buildFilterSwitch(
+                title: tr.modoPretoEBrancoGrayscaleDetox,
+                subtitle: tr.aplicaEscalaDeCinzaEmTodas,
+                icon: Icons.monochrome_photos,
+                value: filters.globalGrayscale,
+                onChanged: (val) => _toggleFocusFilter(globalGrayscale: val),
+              ),
+              _buildFilterSwitch(
+                title: tr.bloquearNotificacoesEBadges,
+                subtitle: tr.removeSinosVermelhosEAlertasNumericos,
+                icon: Icons.notifications_off_outlined,
+                value: filters.globalBlockNotifications,
+                onChanged: (val) => _toggleFocusFilter(globalBlockNotifications: val),
+              ),
+            ],
           ),
-          _buildFilterSwitch(
-            title: 'Bloquear Notificações e Badges',
-            subtitle: 'Remove sinos vermelhos e alertas numéricos em todos os sites para evitar interrupções.',
-            icon: Icons.notifications_off_outlined,
-            value: filters.globalBlockNotifications,
-            onChanged: (val) => _toggleFocusFilter(globalBlockNotifications: val),
-          ),
-          const Divider(height: 24, color: Colors.white12),
 
           // 🔴 YOUTUBE FOCUS
-          _buildPlatformHeader('YouTube Focus', Icons.play_circle_filled, Colors.redAccent),
-          _buildFilterSwitch(
-            title: 'Bloquear YouTube Shorts',
-            subtitle: 'Oculta carrosséis de Shorts na home, na busca e na barra lateral.',
-            icon: Icons.movie_filter_outlined,
-            value: filters.ytBlockShorts,
-            onChanged: (val) => _toggleFocusFilter(ytBlockShorts: val),
+          _buildPlatformSection(
+            id: 'youtube',
+            title: tr.youtubeFocus,
+            icon: Icons.play_circle_filled,
+            color: Colors.redAccent,
+            values: [filters.ytBlockShorts, filters.ytEducationalMode, filters.ytBlockSidebar, filters.ytBlockComments],
+            onAll: (v) => _toggleFocusFilter(
+              ytBlockShorts: v,
+              ytEducationalMode: v,
+              ytBlockSidebar: v,
+              ytBlockComments: v,
+            ),
+            children: [
+              _buildFilterSwitch(
+                title: tr.bloquearYoutubeShorts,
+                subtitle: tr.ocultaCarrosseisDeShortsNaHome,
+                icon: Icons.movie_filter_outlined,
+                value: filters.ytBlockShorts,
+                onChanged: (val) => _toggleFocusFilter(ytBlockShorts: val),
+              ),
+              _buildFilterSwitch(
+                title: tr.ocultarFeedDaHome,
+                subtitle: tr.ocultaTodasAsRecomendacoesAlgoritmicasDa,
+                icon: Icons.school_outlined,
+                value: filters.ytEducationalMode,
+                onChanged: (val) => _toggleFocusFilter(ytEducationalMode: val),
+              ),
+              _buildFilterSwitch(
+                title: tr.ocultarVideosRelacionadosBarraLateral,
+                subtitle: tr.removeSugestoesDeVideosAoLado,
+                icon: Icons.view_sidebar_outlined,
+                value: filters.ytBlockSidebar,
+                onChanged: (val) => _toggleFocusFilter(ytBlockSidebar: val),
+              ),
+              _buildFilterSwitch(
+                title: tr.ocultarComentariosDoYoutube,
+                subtitle: tr.ocultaTodaASecaoDeComentarios,
+                icon: Icons.speaker_notes_off_outlined,
+                value: filters.ytBlockComments,
+                onChanged: (val) => _toggleFocusFilter(ytBlockComments: val),
+              ),
+              _buildYoutubeShowOnlySection(filters),
+            ],
           ),
-          _buildFilterSwitch(
-            title: 'Modo Educativo (Ocultar Feed da Home)',
-            subtitle: 'Oculta todas as recomendações algorítmicas da página inicial do YouTube.',
-            icon: Icons.school_outlined,
-            value: filters.ytEducationalMode,
-            onChanged: (val) => _toggleFocusFilter(ytEducationalMode: val),
-          ),
-          _buildFilterSwitch(
-            title: 'Ocultar Vídeos Relacionados (Barra Lateral)',
-            subtitle: 'Remove sugestões de vídeos ao lado do reprodutor para evitar distrações.',
-            icon: Icons.view_sidebar_outlined,
-            value: filters.ytBlockSidebar,
-            onChanged: (val) => _toggleFocusFilter(ytBlockSidebar: val),
-          ),
-          _buildFilterSwitch(
-            title: 'Ocultar Comentários do YouTube',
-            subtitle: 'Oculta toda a seção de comentários em qualquer vídeo.',
-            icon: Icons.speaker_notes_off_outlined,
-            value: filters.ytBlockComments,
-            onChanged: (val) => _toggleFocusFilter(ytBlockComments: val),
-          ),
-          const Divider(height: 24, color: Colors.white12),
 
           // 📸 INSTAGRAM FOCUS
-          _buildPlatformHeader('Instagram Focus', Icons.camera_alt, Colors.pinkAccent),
-          _buildFilterSwitch(
-            title: 'Bloquear Instagram Reels',
-            subtitle: 'Remove a aba e o carrossel de vídeos curtos Reels no Instagram Web.',
-            icon: Icons.slow_motion_video,
-            value: filters.igBlockReels,
-            onChanged: (val) => _toggleFocusFilter(igBlockReels: val),
+          _buildPlatformSection(
+            id: 'instagram',
+            title: tr.instagramFocus,
+            icon: Icons.camera_alt,
+            color: Colors.pinkAccent,
+            values: [filters.igBlockReels, filters.igBlockFeed, filters.igBlockComments],
+            onAll: (v) => _toggleFocusFilter(igBlockReels: v, igBlockFeed: v, igBlockComments: v),
+            children: [
+              _buildFilterSwitch(
+                title: tr.bloquearInstagramReels,
+                subtitle: tr.removeAAbaEOCarrossel,
+                icon: Icons.slow_motion_video,
+                value: filters.igBlockReels,
+                onChanged: (val) => _toggleFocusFilter(igBlockReels: val),
+              ),
+              _buildFilterSwitch(
+                title: tr.ocultarFeedPrincipalExplore,
+                subtitle: tr.ocultaOFeedInfinitoDePostagens,
+                icon: Icons.dynamic_feed_outlined,
+                value: filters.igBlockFeed,
+                onChanged: (val) => _toggleFocusFilter(igBlockFeed: val),
+              ),
+              _buildFilterSwitch(
+                title: tr.ocultarComentariosDoInstagram,
+                subtitle: tr.ocultaComentariosSobPostagensEVideos,
+                icon: Icons.speaker_notes_off_outlined,
+                value: filters.igBlockComments,
+                onChanged: (val) => _toggleFocusFilter(igBlockComments: val),
+              ),
+            ],
           ),
-          _buildFilterSwitch(
-            title: 'Ocultar Feed Principal & Explore',
-            subtitle: 'Oculta o feed infinito de postagens e sugestões da página inicial.',
-            icon: Icons.dynamic_feed_outlined,
-            value: filters.igBlockFeed,
-            onChanged: (val) => _toggleFocusFilter(igBlockFeed: val),
-          ),
-          _buildFilterSwitch(
-            title: 'Ocultar Comentários do Instagram',
-            subtitle: 'Oculta comentários sob postagens e vídeos.',
-            icon: Icons.speaker_notes_off_outlined,
-            value: filters.igBlockComments,
-            onChanged: (val) => _toggleFocusFilter(igBlockComments: val),
-          ),
-          const Divider(height: 24, color: Colors.white12),
 
           // 🎵 TIKTOK FOCUS
-          _buildPlatformHeader('TikTok Focus', Icons.music_note, Colors.cyanAccent),
-          _buildFilterSwitch(
-            title: 'Bloquear Feed de Vídeos Recomendados',
-            subtitle: 'Bloqueia o fluxo infinito de vídeos curtos "Para Você" no TikTok.',
-            icon: Icons.motion_photos_off_outlined,
-            value: filters.ttBlockFeed,
-            onChanged: (val) => _toggleFocusFilter(ttBlockFeed: val),
+          _buildPlatformSection(
+            id: 'tiktok',
+            title: tr.tiktokFocus,
+            icon: Icons.music_note,
+            color: Colors.cyanAccent,
+            values: [filters.ttBlockFeed],
+            onAll: (v) => _toggleFocusFilter(ttBlockFeed: v),
+            children: [
+              _buildFilterSwitch(
+                title: tr.bloquearFeedDeVideosRecomendados,
+                subtitle: tr.bloqueiaOFluxoInfinitoDeVideos,
+                icon: Icons.motion_photos_off_outlined,
+                value: filters.ttBlockFeed,
+                onChanged: (val) => _toggleFocusFilter(ttBlockFeed: val),
+              ),
+            ],
           ),
-          const Divider(height: 24, color: Colors.white12),
 
           // 🤖 REDDIT FOCUS
-          _buildPlatformHeader('Reddit Focus', Icons.forum, Colors.deepOrangeAccent),
-          _buildFilterSwitch(
-            title: 'Bloquear Feed Principal / Popular',
-            subtitle: 'Oculta a timeline de posts infinitos no r/all e na página inicial do Reddit.',
-            icon: Icons.dashboard_outlined,
-            value: filters.rdBlockFeed,
-            onChanged: (val) => _toggleFocusFilter(rdBlockFeed: val),
+          _buildPlatformSection(
+            id: 'reddit',
+            title: tr.redditFocus,
+            icon: Icons.forum,
+            color: Colors.deepOrangeAccent,
+            values: [filters.rdBlockFeed, filters.rdBlockComments, filters.rdBlockNsfw],
+            onAll: (v) => _toggleFocusFilter(rdBlockFeed: v, rdBlockComments: v, rdBlockNsfw: v),
+            children: [
+              _buildFilterSwitch(
+                title: tr.bloquearFeedPrincipalPopular,
+                subtitle: tr.ocultaATimelineDePostsInfinitos,
+                icon: Icons.dashboard_outlined,
+                value: filters.rdBlockFeed,
+                onChanged: (val) => _toggleFocusFilter(rdBlockFeed: val),
+              ),
+              _buildFilterSwitch(
+                title: tr.ocultarSecoesDeComentarios,
+                subtitle: tr.ocultaAsArvoresDeDiscussaoE,
+                icon: Icons.speaker_notes_off_outlined,
+                value: filters.rdBlockComments,
+                onChanged: (val) => _toggleFocusFilter(rdBlockComments: val),
+              ),
+              _buildFilterSwitch(
+                title: tr.bloquearConteudo18Nsfw,
+                subtitle: tr.escondePostsNsfwNosFeedsE,
+                icon: Icons.no_adult_content,
+                value: filters.rdBlockNsfw,
+                onChanged: (val) => _toggleFocusFilter(rdBlockNsfw: val),
+              ),
+            ],
           ),
-          _buildFilterSwitch(
-            title: 'Ocultar Seções de Comentários',
-            subtitle: 'Oculta as árvores de discussão e comentários em posts do Reddit.',
-            icon: Icons.speaker_notes_off_outlined,
-            value: filters.rdBlockComments,
-            onChanged: (val) => _toggleFocusFilter(rdBlockComments: val),
-          ),
-          const Divider(height: 24, color: Colors.white12),
 
           // 🐦 TWITTER / X FOCUS
-          _buildPlatformHeader('X / Twitter Focus', Icons.flutter_dash, Colors.lightBlueAccent),
-          _buildFilterSwitch(
-            title: 'Bloquear Timeline / Feed Principal',
-            subtitle: 'Oculta a timeline "Para Você" e "Seguindo" no X (Twitter).',
-            icon: Icons.timeline,
-            value: filters.twBlockFeed,
-            onChanged: (val) => _toggleFocusFilter(twBlockFeed: val),
+          _buildPlatformSection(
+            id: 'twitter',
+            title: tr.xTwitterFocus,
+            icon: Icons.flutter_dash,
+            color: Colors.lightBlueAccent,
+            values: [filters.twBlockFeed, filters.twBlockTrends, filters.twBlockSensitive],
+            onAll: (v) => _toggleFocusFilter(twBlockFeed: v, twBlockTrends: v, twBlockSensitive: v),
+            children: [
+              _buildFilterSwitch(
+                title: tr.bloquearTimelineFeedPrincipal,
+                subtitle: tr.ocultaATimelineParaVoceE,
+                icon: Icons.timeline,
+                value: filters.twBlockFeed,
+                onChanged: (val) => _toggleFocusFilter(twBlockFeed: val),
+              ),
+              _buildFilterSwitch(
+                title: tr.ocultarAssuntosDoMomentoTrending,
+                subtitle: tr.removeABarraLateralDeTendencias,
+                icon: Icons.trending_up,
+                value: filters.twBlockTrends,
+                onChanged: (val) => _toggleFocusFilter(twBlockTrends: val),
+              ),
+              _buildFilterSwitch(
+                title: tr.bloquearConteudo18Sensivel,
+                subtitle: tr.escondePostsComMidiaSensivelE,
+                icon: Icons.no_adult_content,
+                value: filters.twBlockSensitive,
+                onChanged: (val) => _toggleFocusFilter(twBlockSensitive: val),
+              ),
+            ],
           ),
-          _buildFilterSwitch(
-            title: 'Ocultar Assuntos do Momento (Trending)',
-            subtitle: 'Remove a barra lateral de tendências e notícias exploratórias.',
-            icon: Icons.trending_up,
-            value: filters.twBlockTrends,
-            onChanged: (val) => _toggleFocusFilter(twBlockTrends: val),
-          ),
-          const Divider(height: 24, color: Colors.white12),
 
           // 💼 LINKEDIN FOCUS
-          _buildPlatformHeader('LinkedIn Focus', Icons.business_center, Colors.blueAccent),
-          _buildFilterSwitch(
-            title: 'Bloquear Feed de Notícias do LinkedIn',
-            subtitle: 'Oculta a timeline de postagens para focar apenas em mensagens e perfis diretos.',
-            icon: Icons.article_outlined,
-            value: filters.liBlockFeed,
-            onChanged: (val) => _toggleFocusFilter(liBlockFeed: val),
+          _buildPlatformSection(
+            id: 'linkedin',
+            title: tr.linkedinFocus,
+            icon: Icons.business_center,
+            color: Colors.blueAccent,
+            values: [filters.liBlockFeed],
+            onAll: (v) => _toggleFocusFilter(liBlockFeed: v),
+            children: [
+              _buildFilterSwitch(
+                title: tr.bloquearFeedDeNoticiasDoLinkedin,
+                subtitle: tr.ocultaATimelineDePostagensPara,
+                icon: Icons.article_outlined,
+                value: filters.liBlockFeed,
+                onChanged: (val) => _toggleFocusFilter(liBlockFeed: val),
+              ),
+            ],
           ),
           const Divider(height: 24, color: Colors.white12),
 
@@ -1798,11 +2150,11 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
           const Divider(height: 24, color: Colors.white12),
 
           // 🎯 HUD FLUTUANTE NOS NAVEGADORES
-          _buildPlatformHeader('HUD Flutuante nos Navegadores (Pílula)', Icons.layers_outlined, Colors.cyanAccent),
+          _buildPlatformHeader(tr.hudFlutuanteNosNavegadoresPilula, Icons.layers_outlined, Colors.cyanAccent),
           _buildHudSlider(
             icon: Icons.opacity,
-            title: 'Opacidade da Pílula (Alfa)',
-            subtitle: 'Controla a transparência da pílula recolhida e do olho fechado nos navegadores.',
+            title: tr.opacidadeDaPilulaAlfa,
+            subtitle: tr.controlaATransparenciaDaPilulaRecolhida,
             value: safeAlpha,
             min: 0.15,
             max: 1.0,
@@ -1814,8 +2166,8 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
           ),
           _buildHudSlider(
             icon: Icons.aspect_ratio_outlined,
-            title: 'Tamanho da Pílula',
-            subtitle: 'Ajusta a escala da pílula e o diâmetro do olho fechado (sempre igual à altura da pílula).',
+            title: tr.tamanhoDaPilula,
+            subtitle: tr.ajustaAEscalaDaPilulaE,
             value: safeScale,
             min: 0.70,
             max: 1.60,
@@ -1826,8 +2178,8 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
             isDark: isDark,
           ),
           _buildFilterSwitch(
-            title: 'Ao esconder pílula, mostrar ícone de Olho arrastável',
-            subtitle: 'Quando ativo, minimizar transforma a pílula em um botão circular com olho fechado arrastável do mesmo tamanho (altura) da pílula; desligado, oculta totalmente (Alt+Shift+C reexibe).',
+            title: tr.aoEsconderPilulaMostrarIconeDe,
+            subtitle: tr.quandoAtivoMinimizarTransformaAPilula,
             icon: Icons.visibility_outlined,
             value: filters.hudHideToEye,
             onChanged: (val) => _toggleFocusFilter(hudHideToEye: val),
@@ -1873,21 +2225,11 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
                     ),
                     Text(
                       displayValue,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.bold,
-                        fontSize: 13,
-                        color: Colors.tealAccent,
-                      ),
+                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.tealAccent),
                     ),
                   ],
                 ),
-                Text(
-                  subtitle,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: isDark ? Colors.white60 : Colors.black54,
-                  ),
-                ),
+                Text(subtitle, style: TextStyle(fontSize: 12, color: isDark ? Colors.white60 : Colors.black54)),
                 Slider(
                   value: value,
                   min: min,
@@ -1909,42 +2251,30 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
   List<Widget> _buildLauncherSection(FocusFiltersDto filters, bool isDark) {
     final acLocked = _isAntiCheatActive;
     final tagSuggestions = _popularTagItems
-        .where((t) => !filters.launcherBlockedTags.any(
-              (b) => b.toLowerCase() == t.canonicalEn.toLowerCase(),
-            ))
+        .where((t) => !filters.launcherBlockedTags.any((b) => b.toLowerCase() == t.canonicalEn.toLowerCase()))
         .take(12)
         .map(
           (t) => _LauncherSuggestionOption(
             value: t.canonicalEn,
             label: t.displayName,
-            secondaryLabel:
-                t.displayName.toLowerCase() != t.canonicalEn.toLowerCase()
-                    ? t.canonicalEn
-                    : null,
+            secondaryLabel: t.displayName.toLowerCase() != t.canonicalEn.toLowerCase() ? t.canonicalEn : null,
           ),
         )
         .toList();
 
     final tagAutocompleteOptions = _tagAutocomplete
-        .where((t) => !filters.launcherBlockedTags.any(
-              (b) => b.toLowerCase() == t.canonicalEn.toLowerCase(),
-            ))
+        .where((t) => !filters.launcherBlockedTags.any((b) => b.toLowerCase() == t.canonicalEn.toLowerCase()))
         .map(
           (t) => _LauncherSuggestionOption(
             value: t.canonicalEn,
             label: t.displayName,
-            secondaryLabel:
-                t.displayName.toLowerCase() != t.canonicalEn.toLowerCase()
-                    ? t.canonicalEn
-                    : null,
+            secondaryLabel: t.displayName.toLowerCase() != t.canonicalEn.toLowerCase() ? t.canonicalEn : null,
           ),
         )
         .toList();
 
     final gameAutocompleteOptions = _gameAutocomplete
-        .where((g) => !filters.launcherBlockedNames.any(
-              (b) => b.toLowerCase() == g.title.toLowerCase(),
-            ))
+        .where((g) => !filters.launcherBlockedNames.any((b) => b.toLowerCase() == g.title.toLowerCase()))
         .map(
           (g) => _LauncherSuggestionOption(
             value: g.title,
@@ -1960,7 +2290,7 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
         children: [
           Expanded(
             child: _buildPlatformHeader(
-              'Launchers & Jogos (Steam API, Heroic, Epic, GOG, Lutris)',
+              tr.launchersJogosSteamApiHeroicEpic,
               Icons.sports_esports_outlined,
               Colors.amberAccent,
             ),
@@ -1973,18 +2303,14 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
                 borderRadius: BorderRadius.circular(12),
                 border: Border.all(color: Colors.amberAccent.withValues(alpha: 0.5)),
               ),
-              child: const Row(
+              child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Icon(Icons.lock, size: 12, color: Colors.amberAccent),
                   SizedBox(width: 4),
                   Text(
-                    'Anti-Cheat Ativo (Remoção Bloqueada)',
-                    style: TextStyle(
-                      fontSize: 10,
-                      fontWeight: FontWeight.w700,
-                      color: Colors.amberAccent,
-                    ),
+                    tr.antiCheatAtivoRemocaoBloqueada,
+                    style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: Colors.amberAccent),
                   ),
                 ],
               ),
@@ -1992,17 +2318,13 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
         ],
       ),
       _buildFilterSwitch(
-        title: 'Ativar Filtro em Launchers & Lojas de Jogos',
-        subtitle:
-            'Bloqueia jogos em execução, páginas de loja, guias, discussões e artworks por nome ou tag via Steam API. Adicionar é sempre livre; remover exige Anti-Cheat desativado.',
+        title: tr.ativarFiltroEmLaunchersLojasDe,
+        subtitle: tr.bloqueiaJogosEmExecucaoPaginasDe,
         icon: Icons.shield_outlined,
         value: filters.launcherFilterEnabled,
         onChanged: (val) {
           if (!val && acLocked) {
-            _showSnack(
-              'Anti-Cheat ativo: desative o Anti-Cheat para desligar o filtro de launchers.',
-              false,
-            );
+            _showSnack(tr.antiCheatAtivoDesativeOAnti3, false);
             return;
           }
           _toggleFocusFilter(launcherFilterEnabled: val);
@@ -2010,8 +2332,8 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
       ),
       const SizedBox(height: 8),
       _buildTermListEditor(
-        label: 'Tags Proibidas (Steam API)',
-        hint: 'Buscar tag na Steam API (ex: Ação, Souls-like, Terror, FPS)...',
+        label: tr.tagsProibidasSteamApi,
+        hint: tr.buscarTagNaSteamApiEx,
         icon: Icons.label_outline,
         accentColor: Colors.amberAccent,
         terms: filters.launcherBlockedTags,
@@ -2028,8 +2350,8 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
       ),
       const SizedBox(height: 10),
       _buildTermListEditor(
-        label: 'Nomes de Jogos Proibidos',
-        hint: 'Buscar jogo na Steam API (ex: Counter-Strike 2, Elden Ring)...',
+        label: tr.nomesDeJogosProibidos,
+        hint: tr.buscarJogoNaSteamApiEx,
         icon: Icons.videogame_asset_outlined,
         accentColor: Colors.orangeAccent,
         terms: filters.launcherBlockedNames,
@@ -2050,13 +2372,9 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
           OutlinedButton.icon(
             onPressed: _configuringLauncherProxy ? null : () => _activateLauncherProxy(true),
             icon: _configuringLauncherProxy
-                ? const SizedBox(
-                    width: 14,
-                    height: 14,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
+                ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
                 : const Icon(Icons.security_outlined, size: 16),
-            label: const Text('Proteger Loja/Comunidade dentro da Steam/Heroic (Proxy + NSS)'),
+            label: Text(tr.protegerLojaComunidadeDentroDaSteam),
           ),
           OutlinedButton.icon(
             onPressed: _loadingGames
@@ -2069,16 +2387,12 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
                     }
                   },
             icon: _loadingGames
-                ? const SizedBox(
-                    width: 14,
-                    height: 14,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
+                ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
                 : Icon(_gamesExpanded ? Icons.expand_less : Icons.search, size: 16),
             label: Text(
               _gamesExpanded
-                  ? 'Ocultar Jogos Detectados (${_installedGames.length})'
-                  : 'Consultar Jogos dos Launchers (Steam API)',
+                  ? tr.ocultarJogosDetectadosP0(_installedGames.length)
+                  : tr.consultarJogosDosLaunchersSteamApi,
             ),
           ),
         ],
@@ -2098,49 +2412,49 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
                   child: Center(child: CircularProgressIndicator(strokeWidth: 2)),
                 )
               : (_installedGames.isEmpty
-                  ? const Padding(
-                      padding: EdgeInsets.all(14),
-                      child: Text(
-                        'Nenhum jogo instalado detectado nos launchers locais (Steam, Heroic, Lutris, Bottles).',
-                        style: TextStyle(fontSize: 12, color: Colors.white60),
-                      ),
-                    )
-                  : ListView.separated(
-                      shrinkWrap: true,
-                      padding: const EdgeInsets.all(8),
-                      itemCount: _installedGames.length,
-                      separatorBuilder: (_, _) => const Divider(height: 10, color: Colors.white10),
-                      itemBuilder: (_, idx) {
-                        final g = _installedGames[idx];
-                        final tags = {...g.tags, ...g.genres}.take(6).toList();
-                        return Row(
-                          children: [
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    '${g.title} • ${g.launcher}',
-                                    style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
-                                  ),
-                                  if (tags.isNotEmpty)
+                    ? Padding(
+                        padding: EdgeInsets.all(14),
+                        child: Text(
+                          tr.nenhumJogoInstaladoDetectadoNosLaunchers,
+                          style: TextStyle(fontSize: 12, color: Colors.white60),
+                        ),
+                      )
+                    : ListView.separated(
+                        shrinkWrap: true,
+                        padding: const EdgeInsets.all(8),
+                        itemCount: _installedGames.length,
+                        separatorBuilder: (_, _) => const Divider(height: 10, color: Colors.white10),
+                        itemBuilder: (_, idx) {
+                          final g = _installedGames[idx];
+                          final tags = {...g.tags, ...g.genres}.take(6).toList();
+                          return Row(
+                            children: [
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
                                     Text(
-                                      tags.join(', '),
-                                      style: const TextStyle(fontSize: 11, color: Colors.white60),
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
+                                      '${g.title} • ${g.launcher}',
+                                      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600),
                                     ),
-                                ],
+                                    if (tags.isNotEmpty)
+                                      Text(
+                                        tags.join(', '),
+                                        style: const TextStyle(fontSize: 11, color: Colors.white60),
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                  ],
+                                ),
                               ),
-                            ),
-                            TextButton(
-                              onPressed: () => _addLauncherTerm(isTag: false, rawTerm: g.title),
-                              child: const Text('+ Bloquear Jogo', style: TextStyle(fontSize: 11)),
-                            ),
-                          ],
-                        );
-                      },
-                    )),
+                              TextButton(
+                                onPressed: () => _addLauncherTerm(isTag: false, rawTerm: g.title),
+                                child: Text(tr.bloquearJogo, style: TextStyle(fontSize: 11)),
+                              ),
+                            ],
+                          );
+                        },
+                      )),
         ),
       ],
     ];
@@ -2202,11 +2516,7 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
                     suffixIcon: loadingAutocomplete
                         ? const Padding(
                             padding: EdgeInsets.all(10),
-                            child: SizedBox(
-                              width: 14,
-                              height: 14,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            ),
+                            child: SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2)),
                           )
                         : null,
                   ),
@@ -2215,10 +2525,7 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
                 ),
               ),
               const SizedBox(width: 8),
-              FilledButton.tonal(
-                onPressed: () => onAdd(controller.text),
-                child: const Text('Adicionar'),
-              ),
+              FilledButton.tonal(onPressed: () => onAdd(controller.text), child: Text(tr.adicionar)),
             ],
           ),
           if (autocompleteOptions.isNotEmpty) ...[
@@ -2270,10 +2577,7 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
                             const SizedBox(width: 8),
                             Text(
                               opt.secondaryLabel!,
-                              style: TextStyle(
-                                fontSize: 10,
-                                color: isDark ? Colors.white54 : Colors.black54,
-                              ),
+                              style: TextStyle(fontSize: 10, color: isDark ? Colors.white54 : Colors.black54),
                             ),
                           ],
                         ],
@@ -2291,13 +2595,10 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
               runSpacing: 6,
               children: terms.map((term) {
                 final display = termDisplayMap[term] ?? term;
-                final labelText =
-                    display.toLowerCase() != term.toLowerCase() ? '$display ($term)' : display;
+                final labelText = display.toLowerCase() != term.toLowerCase() ? '$display ($term)' : display;
                 return InputChip(
                   label: Text(labelText, style: const TextStyle(fontSize: 12)),
-                  tooltip: display.toLowerCase() != term.toLowerCase()
-                      ? 'Tag canônica Steam API: $term'
-                      : null,
+                  tooltip: display.toLowerCase() != term.toLowerCase() ? tr.tagCanonicaSteamApiP0(term) : null,
                   deleteIcon: Icon(
                     antiCheatActive ? Icons.lock_outline : Icons.close,
                     size: 15,
@@ -2311,7 +2612,7 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
           if (quickSuggestions.isNotEmpty) ...[
             const SizedBox(height: 8),
             Text(
-              'Sugestões Steam API:',
+              tr.sugestoesSteamApi,
               style: TextStyle(fontSize: 11, color: isDark ? Colors.white54 : Colors.black54),
             ),
             const SizedBox(height: 4),
@@ -2321,9 +2622,7 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
               children: quickSuggestions.map((tag) {
                 return ActionChip(
                   label: Text('+ ${tag.label}', style: const TextStyle(fontSize: 11)),
-                  tooltip: tag.secondaryLabel != null
-                      ? 'Envia "${tag.value}" para a Steam API'
-                      : null,
+                  tooltip: tag.secondaryLabel != null ? tr.enviaP0ParaASteamApi(tag.value) : null,
                   visualDensity: VisualDensity.compact,
                   onPressed: () => onAdd(tag.value),
                 );
@@ -2332,6 +2631,69 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
           ],
         ],
       ),
+    );
+  }
+
+  final Set<String> _expandedFilterSections = <String>{};
+
+  /// Collapsible platform section: the title row has a switch that turns every filter
+  /// of the platform on/off (on only when all are on) and a chevron to show the list.
+  Widget _buildPlatformSection({
+    required String id,
+    required String title,
+    required IconData icon,
+    required Color color,
+    required List<bool> values,
+    required ValueChanged<bool> onAll,
+    required List<Widget> children,
+  }) {
+    final expanded = _expandedFilterSections.contains(id);
+    final onCount = values.where((v) => v).length;
+    final allOn = values.isNotEmpty && onCount == values.length;
+    void toggleExpanded() => setState(() {
+          if (!_expandedFilterSections.remove(id)) _expandedFilterSections.add(id);
+        });
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        InkWell(
+          borderRadius: BorderRadius.circular(8),
+          onTap: toggleExpanded,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Row(
+              children: [
+                Icon(icon, size: 18, color: color),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    title,
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: color),
+                  ),
+                ),
+                Text('$onCount/${values.length}', style: const TextStyle(fontSize: 11, color: Colors.white54)),
+                const SizedBox(width: 6),
+                Tooltip(
+                  message: allOn ? tr.desativarTodos : tr.ativarTodos,
+                  child: Switch(value: allOn, onChanged: onAll),
+                ),
+                Icon(expanded ? Icons.expand_less : Icons.expand_more, color: Colors.white60),
+              ],
+            ),
+          ),
+        ),
+        AnimatedSize(
+          duration: const Duration(milliseconds: 180),
+          alignment: Alignment.topCenter,
+          child: expanded
+              ? Padding(
+                  padding: const EdgeInsets.only(left: 8, bottom: 6),
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: children),
+                )
+              : const SizedBox(width: double.infinity),
+        ),
+        const Divider(height: 12, color: Colors.white12),
+      ],
     );
   }
 
@@ -2344,11 +2706,7 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
           const SizedBox(width: 8),
           Text(
             title,
-            style: TextStyle(
-              fontWeight: FontWeight.bold,
-              fontSize: 14,
-              color: color,
-            ),
+            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: color),
           ),
         ],
       ),
@@ -2383,43 +2741,25 @@ class _GeneralSettingsViewState extends State<GeneralSettingsView> {
                     color: isDark ? Colors.white : Colors.black87,
                   ),
                 ),
-                Text(
-                  subtitle,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: isDark ? Colors.white60 : Colors.black54,
-                  ),
-                ),
+                Text(subtitle, style: TextStyle(fontSize: 12, color: isDark ? Colors.white60 : Colors.black54)),
               ],
             ),
           ),
           const SizedBox(width: 8),
-          Switch(
-            value: value,
-            activeThumbColor: Colors.tealAccent,
-            onChanged: onChanged,
-          ),
+          Switch(value: value, activeThumbColor: Colors.tealAccent, onChanged: onChanged),
         ],
       ),
     );
   }
 
-  Widget _buildCard({
-    required String title,
-    required IconData icon,
-    required Color iconColor,
-    required Widget child,
-  }) {
+  Widget _buildCard({required String title, required IconData icon, required Color iconColor, required Widget child}) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return Card(
       elevation: 1,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(14),
-        side: BorderSide(
-          color: isDark ? Colors.white12 : Colors.black12,
-          width: 1,
-        ),
+        side: BorderSide(color: isDark ? Colors.white12 : Colors.black12, width: 1),
       ),
       color: isDark ? const Color(0xFF161922) : Colors.white,
       child: Padding(

@@ -39,6 +39,7 @@ pub const PROXY_DEFAULT_PORT: u16 = 4546;
 const MAX_HTML_BODY_BYTES: usize = 8 * 1024 * 1024;
 const FOCUS_CORE_JS: &str = include_str!("../../chronos_extension/focus_filters_core.js");
 const FOCUS_HUD_PANEL_JS: &str = include_str!("../../chronos_extension/focus_hud_panel.js");
+const FOCUS_I18N_JS: &str = include_str!("../../chronos_extension/i18n.js");
 
 static CRYPTO_INIT: Once = Once::new();
 static PROXY_STARTED: AtomicBool = AtomicBool::new(false);
@@ -92,6 +93,13 @@ const ALWAYS_PASSTHROUGH_SUFFIXES: &[&str] = &[
     "ytimg.com",
     "ggpht.com",
     "gstatic.com",
+    // Google APIs / map tiles / user content: never top-level pages, and intercepting
+    // them breaks Maps/Street View streams.
+    "googleapis.com",
+    "googleusercontent.com",
+    "google-analytics.com",
+    "googletagmanager.com",
+    "doubleclick.net",
     "cdninstagram.com",
     "fbcdn.net",
     "tiktokcdn.com",
@@ -130,7 +138,7 @@ fn host_matches_suffix(host: &str, suffix: &str) -> bool {
     h == s || h.ends_with(&format!(".{s}"))
 }
 
-fn known_domains_for_app(app_lower: &str) -> &'static [&'static str] {
+pub(crate) fn known_domains_for_app(app_lower: &str) -> &'static [&'static str] {
     if app_lower.contains("youtube") {
         &["youtube.com", "youtu.be"]
     } else if app_lower.contains("instagram") {
@@ -194,7 +202,7 @@ impl ProxyConfig {
             .and_then(|p| std::fs::read(p).ok());
 
         let bind_addr = std::env::var("CHRONOS_PROXY_BIND")
-            .unwrap_or_else(|_| format!("127.0.0.1:{PROXY_DEFAULT_PORT}"));
+            .unwrap_or_else(|_| format!("127.0.0.1:{}", crate::profile::proxy_port()));
 
         Self {
             bind_addr,
@@ -626,6 +634,13 @@ pub(crate) fn extract_rule_patterns(item: &engine::SiteStatusItem) -> Vec<String
 
 /// Checks whether [target] or [title] matches any user-configured whitelist group.
 pub(crate) fn is_whitelisted_target(target: &str, title: &str) -> bool {
+    // YouTube videos of a whitelisted content type (under its daily cap) stay reachable
+    // even when the YouTube rule is exhausted/blocked.
+    if let Some(yt) = crate::youtube::parse_youtube_url(target) {
+        if crate::youtube::exempt_type_for(&yt).is_some() {
+            return true;
+        }
+    }
     let target_l = target.to_ascii_lowercase();
     let title_l = title.to_ascii_lowercase();
     for wg in db::get_all_whitelist_groups() {
@@ -677,6 +692,14 @@ pub fn should_intercept_host(
     if clean.starts_with("ocsp.") || clean.starts_with("crl.") {
         return false;
     }
+    // Google Maps tile/imagery hosts (khms0.google.com, mt1.google.com, ...).
+    if let Some(first) = clean.strip_suffix(".google.com") {
+        if ["khms", "khm", "mt", "kh"].iter().any(|p| {
+            first.strip_prefix(p).is_some_and(|rest| !rest.is_empty() && rest.chars().all(|c| c.is_ascii_digit()))
+        }) {
+            return false;
+        }
+    }
     if CORE_DISTRACTION_DOMAINS
         .iter()
         .any(|s| host_matches_suffix(&clean, s))
@@ -685,6 +708,9 @@ pub fn should_intercept_host(
     }
     if pinned_bypass.contains(&clean) {
         return false;
+    }
+    if crate::adult::should_intercept_host(&clean) {
+        return true;
     }
     let has_launcher_rules = filters.launcher_filter_enabled
         && (!filters.launcher_blocked_tags.is_empty() || !filters.launcher_blocked_names.is_empty());
@@ -702,7 +728,19 @@ pub fn should_intercept_host(
             }
         }
     }
+    // Detox-only interception (CSS on every page) skips Google: intercepting
+    // www.google.com breaks Maps/Street View rendering.
+    if is_google_web_host(&clean) {
+        return false;
+    }
     filters.global_grayscale || filters.global_block_notifications
+}
+
+/// google.com / google.com.br / maps.google.* (Search, Maps, Street View pages).
+fn is_google_web_host(host: &str) -> bool {
+    let h = host.strip_prefix("www.").unwrap_or(host);
+    let h = h.strip_prefix("maps.").unwrap_or(h);
+    h == "google.com" || h.starts_with("google.com.") || h.starts_with("google.") && h.matches('.').count() <= 2
 }
 
 pub(crate) fn find_matching_rule<'a>(
@@ -781,6 +819,8 @@ pub(crate) fn focus_filters_json_value(f: &db::FocusFilters) -> serde_json::Valu
         "ytEducationalMode": f.yt_educational_mode,
         "ytBlockSidebar": f.yt_block_sidebar,
         "ytBlockComments": f.yt_block_comments,
+        "ytShowOnlyEnabled": f.yt_show_only_enabled,
+        "ytShowOnlyTypes": f.yt_show_only_types,
         "igBlockReels": f.ig_block_reels,
         "igBlockFeed": f.ig_block_feed,
         "igBlockComments": f.ig_block_comments,
@@ -789,6 +829,8 @@ pub(crate) fn focus_filters_json_value(f: &db::FocusFilters) -> serde_json::Valu
         "rdBlockComments": f.rd_block_comments,
         "twBlockFeed": f.tw_block_feed,
         "twBlockTrends": f.tw_block_trends,
+        "rdBlockNsfw": f.rd_block_nsfw,
+        "twBlockSensitive": f.tw_block_sensitive,
         "liBlockFeed": f.li_block_feed,
         "globalGrayscale": f.global_grayscale,
         "globalBlockNotifications": f.global_block_notifications,
@@ -1000,10 +1042,17 @@ pub fn patch_csp_header(csp: &str, nonce: &str) -> String {
 }
 
 /// Injects initial CSS + shared `focus_filters_core.js` runtime safely into an HTML page.
+/// A complete page (has `<html>`, `<head>` or `<body>` near the start) rather than a fragment.
+pub fn is_full_html_document(html: &str) -> bool {
+    let head: String = html.chars().take(4096).collect::<String>().to_ascii_lowercase();
+    head.contains("<!doctype html") || head.contains("<html") || head.contains("<head") || head.contains("<body")
+}
+
 pub fn inject_html(html: &str, host: &str, filters: &db::FocusFilters, nonce: &str) -> String {
     let initial_css = build_initial_css(host, filters);
     let safe_core_js = FOCUS_CORE_JS.replace("</", "<\\/");
     let safe_panel_js = FOCUS_HUD_PANEL_JS.replace("</", "<\\/");
+    let safe_i18n_js = FOCUS_I18N_JS.replace("</", "<\\/");
     let filters_json = serde_json::to_string(&focus_filters_json_value(filters))
         .unwrap_or_else(|_| "{}".to_string())
         .replace("</", "<\\/");
@@ -1028,8 +1077,11 @@ pub fn inject_html(html: &str, host: &str, filters: &db::FocusFilters, nonce: &s
 
     let runtime_js = format!(
         r#"(function() {{
+  if (window.__chronosProxyRuntime) return;
+  window.__chronosProxyRuntime = true;
   try {{
     {safe_core_js}
+    {safe_i18n_js}
     {safe_panel_js}
     var core = window.ChronosFocusCore;
     var hudFactory = window.ChronosHudPanel;
@@ -1038,6 +1090,7 @@ pub fn inject_html(html: &str, host: &str, filters: &db::FocusFilters, nonce: &s
     var currentFilters = {filters_json};
     var currentTagDisplayMap = {tag_display_map_json};
     var currentPrimaryLanguage = {primary_lang_json};
+    if (window.ChronosI18n) window.ChronosI18n.setLang(currentPrimaryLanguage);
     var currentAntiCheatActive = {ac_active_js};
     var sseConnected = false;
     var styleId = 'chronos-focus-css';
@@ -1099,6 +1152,29 @@ pub fn inject_html(html: &str, host: &str, filters: &db::FocusFilters, nonce: &s
       if (st.textContent !== css) st.textContent = css;
       if (window.ChronosLauncherDomFilter) {{
         window.ChronosLauncherDomFilter.apply(currentFilters, launcherFilterOpts());
+      }}
+      if (window.ChronosYoutubeTypeFilter) {{
+        window.ChronosYoutubeTypeFilter.apply(currentFilters, {{
+          document: document,
+          location: window.location,
+          classifyItems: function(items, done) {{
+            fetch('/__chronos_api__/youtube/classify', {{
+              method: 'POST',
+              headers: {{ 'Content-Type': 'application/json' }},
+              body: JSON.stringify({{ items: items }}),
+              cache: 'no-store',
+              credentials: 'omit'
+            }})
+              .then(function(r) {{ return r.ok ? r.json() : {{ success: false, results: [] }}; }})
+              .then(function(d) {{ done(d); }})
+              .catch(function() {{ done({{ success: false, results: [] }}); }});
+          }},
+          skipShort: function() {{
+            var b = document.querySelector('#navigation-button-down button');
+            if (b) {{ b.click(); return; }}
+            document.dispatchEvent(new KeyboardEvent('keydown', {{ key: 'ArrowDown', code: 'ArrowDown', keyCode: 40, bubbles: true }}));
+          }}
+        }});
       }}
       if (hud) hud.syncFilters(currentFilters, currentTagDisplayMap, currentPrimaryLanguage, currentAntiCheatActive);
     }}
@@ -1555,7 +1631,7 @@ fn is_navigation_document_request(headers: &[(String, String)]) -> bool {
 
 pub(crate) fn update_active_tab_from_proxy(url: &str, title: &str) {
     let clean_url = url.trim();
-    if clean_url.is_empty() || clean_url.contains("127.0.0.1:4545") {
+    if clean_url.is_empty() || clean_url.contains(&crate::profile::api_host()) {
         return;
     }
     let now_ms = SystemTime::now()
@@ -1574,15 +1650,7 @@ pub(crate) fn update_active_tab_from_proxy(url: &str, title: &str) {
         }
     }
 
-    let payload = serde_json::json!({
-        "url": clean_url,
-        "title": title.trim(),
-        "audible_url": "",
-        "audible_title": "",
-        "source": "proxy",
-        "timestamp_ms": now_ms,
-    });
-    let _ = std::fs::write("/tmp/chronos_active_tab.json", payload.to_string());
+    crate::local_api::record_focused_browser_tab(clean_url, title, "proxy");
 }
 
 pub(crate) fn urlencoding_component(input: &str) -> String {
@@ -2141,6 +2209,20 @@ async fn try_handle_local_or_block_exchange<C: AsyncRead + AsyncWrite + Unpin>(
         return Ok(Some(false));
     }
 
+    // 1a0. Virtual Same-Origin API: YouTube video type classification ("mostrar apenas")
+    if origin_path.starts_with("/__chronos_api__/youtube/classify") {
+        let payload = crate::youtube::handle_classify_payload(req_body).await;
+        send_simple_response(
+            client,
+            "200 OK",
+            "application/json; charset=utf-8",
+            &[],
+            payload.to_string().as_bytes(),
+        )
+        .await?;
+        return Ok(Some(false));
+    }
+
     // 1a. Virtual Same-Origin API: Steam API game metadata & tag resolution + autocomplete + blocked page
     if origin_path.starts_with("/__chronos_api__/launchers/resolve") {
         match crate::local_api::handle_launchers_resolve_payload(req_body).await {
@@ -2248,10 +2330,25 @@ async fn try_handle_local_or_block_exchange<C: AsyncRead + AsyncWrite + Unpin>(
             let url = v.get("url").and_then(|s| s.as_str()).unwrap_or("");
             let title = v.get("title").and_then(|s| s.as_str()).unwrap_or("");
             update_active_tab_from_proxy(url, title);
+            crate::youtube::warm_classification(url).await;
+            if let Some(hit) = crate::adult::check(url, title) {
+                let blocked_url = format!(
+                    "{}/blocked?url={}&entityId=adult_filter&name={}&reason={}",
+                    crate::profile::api_base(),
+                    urlencoding_component(url),
+                    urlencoding_component("Conteúdo adulto"),
+                    urlencoding_component(&crate::adult::blocked_reason(&hit))
+                );
+                let json = serde_json::json!({"blocked": true, "entityId": "adult_filter", "blockedUrl": blocked_url});
+                send_simple_response(client, "200 OK", "application/json; charset=utf-8", &[], json.to_string().as_bytes())
+                    .await?;
+                return Ok(Some(false));
+            }
             let rules = engine::get_all_site_rules_status();
             if let Some(blocked) = find_blocked_rule(url, &rules) {
                 let blocked_url = format!(
-                    "http://127.0.0.1:4545/blocked?url={}&entityId={}&name={}",
+                    "{}/blocked?url={}&entityId={}&name={}",
+                    crate::profile::api_base(),
                     urlencoding_component(url),
                     urlencoding_component(&blocked.entity_id),
                     urlencoding_component(&blocked.display_name)
@@ -2313,10 +2410,31 @@ async fn try_handle_local_or_block_exchange<C: AsyncRead + AsyncWrite + Unpin>(
     let is_doc = is_navigation_document_request(&req.headers);
 
     if is_doc {
+        crate::youtube::warm_classification(&full_url).await;
+        if let Some(hit) = crate::adult::check(&full_url, "") {
+            let location = format!(
+                "{}/blocked?url={}&entityId=adult_filter&name={}&reason={}",
+                    crate::profile::api_base(),
+                urlencoding_component(&full_url),
+                urlencoding_component("Conteúdo adulto"),
+                urlencoding_component(&crate::adult::blocked_reason(&hit))
+            );
+            send_simple_response(client, "302 Found", "text/plain", &[("Location", &location)], b"").await?;
+            return Ok(Some(false));
+        }
+        if crate::adult::settings().safe_search {
+            if let Some(safe) = crate::adult::safe_search_redirect(&full_url) {
+                if crate::adult::settings().enabled {
+                    send_simple_response(client, "302 Found", "text/plain", &[("Location", &safe)], b"").await?;
+                    return Ok(Some(false));
+                }
+            }
+        }
         let rules = engine::get_all_site_rules_status();
         if let Some(blocked) = find_blocked_rule(&full_url, &rules) {
             let location = format!(
-                "http://127.0.0.1:4545/blocked?url={}&entityId={}&name={}",
+                "{}/blocked?url={}&entityId={}&name={}",
+                    crate::profile::api_base(),
                 urlencoding_component(&full_url),
                 urlencoding_component(&blocked.entity_id),
                 urlencoding_component(&blocked.display_name)
@@ -2680,7 +2798,13 @@ where
     let html_str = String::from_utf8_lossy(&decoded_bytes);
     let filters = db::get_focus_filters();
     let nonce = generate_nonce();
-    let injected_html = inject_html(&html_str, host, &filters, &nonce);
+    // Only full documents get the runtime: AJAX HTML fragments (Steam store search,
+    // infinite scroll) are executed by jQuery and would each mount another pill.
+    let injected_html = if is_full_html_document(&html_str) {
+        inject_html(&html_str, host, &filters, &nonce)
+    } else {
+        html_str.to_string()
+    };
     let injected_bytes = injected_html.as_bytes();
 
     let mut out_head = format!(
@@ -2747,6 +2871,29 @@ mod tests {
         assert_eq!(cfg.alpn_protocols, vec![b"http/1.1".to_vec()]);
 
         let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_runtime_injected_only_into_full_documents_once() {
+        assert!(is_full_html_document("<!DOCTYPE html><html><body>x</body></html>"));
+        assert!(is_full_html_document("  <html lang=pt>"));
+        assert!(!is_full_html_document("<div class=\"search_result_row\"><script>x()</script></div>"));
+        let f = db::FocusFilters::default();
+        let out = inject_html("<html><head></head><body></body></html>", "store.steampowered.com", &f, "n1");
+        assert!(out.contains("window.__chronosProxyRuntime"), "runtime guards against running twice");
+    }
+
+    #[test]
+    fn test_maps_and_api_hosts_pass_through_even_with_global_detox() {
+        let filters = db::FocusFilters { global_block_notifications: true, ..Default::default() };
+        let empty = HashSet::new();
+        for h in ["streetviewpixels-pa.googleapis.com", "maps.googleapis.com", "lh3.googleusercontent.com", "khms0.google.com", "mt1.google.com"] {
+            assert!(!should_intercept_host(h, &filters, &[], &empty), "{h} must pass through");
+        }
+        assert!(should_intercept_host("example.com", &filters, &[], &empty), "pages still intercepted for detox");
+        for h in ["www.google.com", "www.google.com.br", "maps.google.com", "google.de"] {
+            assert!(!should_intercept_host(h, &filters, &[], &empty), "{h}: detox alone must not intercept Google");
+        }
     }
 
     #[test]
@@ -3284,7 +3431,7 @@ mod tests {
         assert!(html_active.contains("getAntiCheatActive: function() { return currentAntiCheatActive; }"));
         assert!(html_active.contains("hud.syncFilters(currentFilters, currentTagDisplayMap, currentPrimaryLanguage, currentAntiCheatActive)"));
 
-        engine::disable_anti_cheat(engine::STAYFOCUSD_CHALLENGE_TEXT).expect("disable ac");
+        engine::disable_anti_cheat(&engine::current_challenge_text()).expect("disable ac");
         let html_off = inject_html(
             "<html><head></head><body><h1>Steam</h1></body></html>",
             "store.steampowered.com",

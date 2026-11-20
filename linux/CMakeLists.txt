@@ -8,6 +8,11 @@ set(BINARY_NAME "chronos_app")
 # The unique GTK application identifier for this application. See:
 # https://wiki.gnome.org/HowDoI/ChooseApplicationID
 set(APPLICATION_ID "com.example.chronos_app")
+# Debug builds are the dev profile and must run side by side with the installed release
+# (single-instance apps with the same id would just re-open the release window).
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+  set(APPLICATION_ID "com.example.chronos_app.dev")
+endif()
 
 # Explicitly opt in to modern CMake behaviors to avoid warnings with recent
 # versions of CMake.
@@ -97,6 +102,13 @@ install(TARGETS ${BINARY_NAME} RUNTIME DESTINATION "${CMAKE_INSTALL_PREFIX}"
 # Bundle persistent Rust background proxy/local-API daemon beside chronos_app when built.
 set(CHRONOS_PROXY_BIN "${CMAKE_CURRENT_SOURCE_DIR}/../rust/target/release/chronos_proxy")
 install(PROGRAMS "${CHRONOS_PROXY_BIN}"
+  DESTINATION "${CMAKE_INSTALL_PREFIX}"
+  OPTIONAL
+  COMPONENT Runtime)
+
+# Root vault of the layered anti-cheat (installed by the guard as root).
+set(CHRONOS_VAULT_BIN "${CMAKE_CURRENT_SOURCE_DIR}/../rust/target/release/chronos_vault")
+install(PROGRAMS "${CHRONOS_VAULT_BIN}"
   DESTINATION "${CMAKE_INSTALL_PREFIX}"
   OPTIONAL
   COMPONENT Runtime)

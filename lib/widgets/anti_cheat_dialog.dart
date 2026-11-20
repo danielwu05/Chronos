@@ -1,13 +1,15 @@
+import 'package:chronos_app/services/app_locale.dart';
 import 'dart:async';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import '../src/rust/api/simple.dart';
 import '../services/browser_extension_installer.dart';
+import '../services/app_profile.dart';
 import '../services/web_block_server.dart';
 
 /// Notifies active UI listeners (e.g. GeneralSettingsView inside IndexedStack)
-/// whenever Anti-Cheat activation/deactivation changes anywhere in the app.
+/// whenever Anti-Burla activation/deactivation changes anywhere in the app.
 final ValueNotifier<int> antiCheatStateRevision = ValueNotifier<int>(0);
 
 void notifyAntiCheatStateChanged() {
@@ -20,7 +22,7 @@ class AntiCheatDialog extends StatefulWidget {
 
   const AntiCheatDialog({super.key, required this.onStateChanged});
 
-  /// Opens the Anti-Cheat dialog and resolves `true` once Anti-Cheat is inactive (`OFF`).
+  /// Opens the Anti-Burla dialog and resolves `true` once Anti-Burla is inactive (`OFF`).
   static Future<bool> showUnlockChallenge(
     BuildContext context, {
     required VoidCallback onStateChanged,
@@ -55,6 +57,8 @@ class _AntiCheatDialogState extends State<AntiCheatDialog> {
   final TextEditingController _challengeController = TextEditingController();
   String _challengeError = '';
   int _challengeProgress = 0;
+  int _challengeResets = 0;
+  final FocusNode _challengeFocus = FocusNode();
 
   @override
   void initState() {
@@ -77,8 +81,13 @@ class _AntiCheatDialogState extends State<AntiCheatDialog> {
 
   @override
   void dispose() {
+    // Every time the challenge is closed, the next one uses another text from the pool.
+    if (_state?.isActive == true && _state?.mode == 'CHALLENGE') {
+      redrawChallengeText().catchError((_) => const ActionFeedback(success: false, message: ''));
+    }
     _countdownTimer?.cancel();
     _challengeController.dispose();
+    _challengeFocus.dispose();
     super.dispose();
   }
 
@@ -121,6 +130,21 @@ class _AntiCheatDialogState extends State<AntiCheatDialog> {
       return;
     }
 
+    // Any other paste (middle-click / primary selection, drag and drop) shows up as
+    // several characters at once: treat it like a typo and reset.
+    if (text.length - _challengeProgress > 3) {
+      _challengeController.clear();
+      _challengeResets++;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _challengeFocus.requestFocus();
+      });
+      setState(() {
+        _challengeError = tr.colarNaoEPermitidoDigiteO;
+        _challengeProgress = 0;
+      });
+      return;
+    }
+
     // Se estiver no meio da composição de um acento (dead key em teclados ABNT2/US-Intl),
     // não acusa erro nem reseta prematuramente.
     if (_isComposingDeadKey(text, expected)) {
@@ -132,8 +156,12 @@ class _AntiCheatDialogState extends State<AntiCheatDialog> {
       // Errou! Reseta imediatamente como no StayFocusd
       HapticFeedback.heavyImpact();
       _challengeController.clear();
+      _challengeResets++;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _challengeFocus.requestFocus();
+      });
       setState(() {
-        _challengeError = '❌ Erro detectado! No modo StayFocusd, qualquer caractere incorreto reseta o texto por completo. Digite com atenção máxima!';
+        _challengeError = tr.erroDetectadoNoModoStayfocusdQualquer;
         _challengeProgress = 0;
       });
       return;
@@ -154,8 +182,8 @@ class _AntiCheatDialogState extends State<AntiCheatDialog> {
       if (_selectedMode == 'NUKE' && (totalNukeSeconds == null || totalNukeSeconds <= 0)) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Selecione uma duração válida maior que 0 minutos para o Modo Nuke.'),
+            SnackBar(
+              content: Text(tr.selecioneUmaDuracaoValidaMaiorQue),
               backgroundColor: Colors.redAccent,
             ),
           );
@@ -163,22 +191,44 @@ class _AntiCheatDialogState extends State<AntiCheatDialog> {
         return;
       }
 
+      // Risk warning: while active, Chronos cannot be closed or uninstalled.
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text(tr.ativarOAntiBurla),
+          content: Text(
+            tr.enquantoOAntiBurlaEstiverAtivo(_selectedMode == 'NUKE' ? tr.noModoNukeIssoSoAcaba : tr.paraDesativarSeraPrecisoCompletarO),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: Text(tr.cancelar)),
+            FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: Colors.red.shade700),
+              onPressed: () => Navigator.pop(ctx, true),
+              child: Text(tr.entendiAtivar),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true || !mounted) return;
+
       await enableAntiCheat(mode: _selectedMode, nukeSeconds: totalNukeSeconds);
-      
+
       // Protege extensões nos navegadores detectados
       await BrowserExtensionInstaller.installAll(isAntiCheatActive: true);
 
       notifyAntiCheatStateChanged();
       widget.onStateChanged();
-      await _loadState();
 
       if (mounted) {
+        final messenger = ScaffoldMessenger.of(context);
         final durationLabel = '${_nukeDays.toString().padLeft(2, '0')}d ${_nukeHours.toString().padLeft(2, '0')}h ${_nukeMinutes.toString().padLeft(2, '0')}m';
-        ScaffoldMessenger.of(context).showSnackBar(
+        // Back to the main app (do not show the unlock challenge right after activating).
+        Navigator.of(context).pop();
+        messenger.showSnackBar(
           SnackBar(
             content: Text(_selectedMode == 'NUKE'
-                ? '☢️ Modo Nuke Ativado por $durationLabel! Configurações e extensões travadas.'
-                : '🛡️ Modo Anti-Cheat Ativado com Desafio Estrito!'),
+                ? tr.modoNukeAtivadoPorP0Configuracoes(durationLabel)
+                : tr.modoAntiCheatAtivadoComDesafio),
             backgroundColor: Colors.green[800],
           ),
         );
@@ -186,7 +236,7 @@ class _AntiCheatDialogState extends State<AntiCheatDialog> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Erro ao ativar: $e'), backgroundColor: Colors.red[800]),
+          SnackBar(content: Text(tr.erroAoAtivarP0(e)), backgroundColor: Colors.red[800]),
         );
       }
     }
@@ -201,8 +251,8 @@ class _AntiCheatDialogState extends State<AntiCheatDialog> {
       await _loadState();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('🔓 Anti-Cheat desativado com sucesso! Modificações liberadas.'),
+          SnackBar(
+            content: Text(tr.antiCheatDesativadoComSucessoModificacoes),
             backgroundColor: Colors.blueAccent,
           ),
         );
@@ -210,7 +260,7 @@ class _AntiCheatDialogState extends State<AntiCheatDialog> {
       }
     } catch (e) {
       setState(() {
-        _challengeError = 'Erro: $e';
+        _challengeError = tr.erroP0(e);
       });
     }
   }
@@ -265,7 +315,7 @@ class _AntiCheatDialogState extends State<AntiCheatDialog> {
               const SizedBox(width: 12),
               Expanded(
                 child: Text(
-                  isActive ? 'Proteção Anti-Cheat Ativa' : 'Configurar Modo Anti-Cheat',
+                  isActive ? tr.protecaoAntiCheatAtiva : tr.configurarModoAntiCheat,
                   style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.white),
                 ),
               ),
@@ -278,19 +328,19 @@ class _AntiCheatDialogState extends State<AntiCheatDialog> {
           const Divider(color: Colors.white24, height: 24),
 
           if (!isActive) ...[
-            const Text(
-              'O Anti-Cheat impede você de burlar o Chronos, bloquear ou aumentar limites nos momentos de fraqueza, e protege a extensão contra remoção.',
+            Text(
+              tr.oAntiCheatImpedeVoceDe,
               style: TextStyle(color: Colors.white70, fontSize: 13, height: 1.4),
             ),
             const SizedBox(height: 16),
-            const Text('Escolha o Método de Travamento:', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
+            Text(tr.escolhaOMetodoDeTravamento, style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
             const SizedBox(height: 12),
 
             // Opção 1: StayFocusd Challenge
             _buildModeCard(
               modeKey: 'CHALLENGE',
-              title: 'Desafio de Digitação Estrito (Estilo StayFocusd)',
-              desc: 'Qualquer tentativa de desativar ou aumentar limites de tempo de tela exige redigitar um texto de compromisso extenso sem nenhum erro. Errou um caractere? O texto é resetado!',
+              title: tr.desafioDeDigitacaoEstritoEstiloStayfocusd,
+              desc: tr.qualquerTentativaDeDesativarOuAumentar,
               icon: Icons.keyboard_rounded,
               color: Colors.amber,
             ),
@@ -299,16 +349,16 @@ class _AntiCheatDialogState extends State<AntiCheatDialog> {
             // Opção 2: Modo Nuke (Nuclear Option)
             _buildModeCard(
               modeKey: 'NUKE',
-              title: 'Modo Nuke (Bloqueio Total por Tempo)',
-              desc: 'Trava 100% o Chronos por um período de tempo. Durante esse período, NÃO EXISTE forma de destravar ou alterar nada até o tempo acabar.',
+              title: tr.modoNukeBloqueioTotalPorTempo,
+              desc: tr.trava100OChronosPorUm,
               icon: Icons.timer_rounded,
               color: Colors.deepOrangeAccent,
             ),
 
             if (_selectedMode == 'NUKE') ...[
               const SizedBox(height: 16),
-              const Text(
-                'Duração do Travamento Nuke (Scroll para ajustar):',
+              Text(
+                tr.duracaoDoTravamentoNukeScrollPara,
                 style: TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 10),
@@ -414,14 +464,14 @@ class _AntiCheatDialogState extends State<AntiCheatDialog> {
               icon: const Icon(Icons.lock_clock),
               label: Text(
                 _selectedMode == 'NUKE'
-                    ? 'ATIVAR MODO NUKE (${_nukeDays.toString().padLeft(2, '0')}d ${_nukeHours.toString().padLeft(2, '0')}h ${_nukeMinutes.toString().padLeft(2, '0')}m)'
-                    : 'ATIVAR ANTI-CHEAT RESTRITO',
+                    ? tr.ativarModoNukeP0('${_nukeDays.toString().padLeft(2, '0')}d ${_nukeHours.toString().padLeft(2, '0')}h ${_nukeMinutes.toString().padLeft(2, '0')}m')
+                    : tr.ativarAntiCheatRestrito,
                 style: const TextStyle(fontWeight: FontWeight.bold),
               ),
               onPressed: _enableAntiCheat,
             ),
           ] else ...[
-            // Anti-Cheat está ATIVO
+            // Anti-Burla está ATIVO
             if (_state?.mode == 'NUKE') ...[
               Container(
                 padding: const EdgeInsets.all(16),
@@ -434,8 +484,8 @@ class _AntiCheatDialogState extends State<AntiCheatDialog> {
                   children: [
                     const Icon(Icons.lock, color: Colors.deepOrangeAccent, size: 48),
                     const SizedBox(height: 8),
-                    const Text(
-                      'MODO NUKE EM ANDAMENTO',
+                    Text(
+                      tr.modoNukeEmAndamento,
                       style: TextStyle(color: Colors.deepOrangeAccent, fontWeight: FontWeight.bold, fontSize: 16),
                     ),
                     const SizedBox(height: 12),
@@ -450,8 +500,8 @@ class _AntiCheatDialogState extends State<AntiCheatDialog> {
                       ),
                     ),
                     const SizedBox(height: 12),
-                    const Text(
-                      'Nenhuma alteração de tempo de tela, regra ou desinstalação de extensão é permitida até que este tempo expire.',
+                    Text(
+                      tr.nenhumaAlteracaoDeTempoDeTela,
                       textAlign: TextAlign.center,
                       style: TextStyle(color: Colors.white70, fontSize: 12),
                     ),
@@ -470,19 +520,19 @@ class _AntiCheatDialogState extends State<AntiCheatDialog> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Row(
+                    Row(
                       children: [
                         Icon(Icons.shield, color: Colors.amber, size: 20),
                         SizedBox(width: 8),
                         Text(
-                          'Desafio de Digitação StayFocusd',
+                          tr.desafioDeDigitacaoStayfocusd,
                           style: TextStyle(color: Colors.amber, fontWeight: FontWeight.bold),
                         ),
                       ],
                     ),
                     const SizedBox(height: 8),
-                    const Text(
-                      'Para destravar o aplicativo e liberar edições, digite exatamente o texto abaixo sem cometer um único erro:',
+                    Text(
+                      tr.paraDestravarOAplicativoELiberar,
                       style: TextStyle(color: Colors.white70, fontSize: 12),
                     ),
                     const SizedBox(height: 10),
@@ -509,7 +559,7 @@ class _AntiCheatDialogState extends State<AntiCheatDialog> {
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      'Progresso: $_challengeProgress / ${_state!.challengeText.length} caracteres',
+                      tr.progressoP0P1Caracteres(_challengeProgress, _state!.challengeText.length),
                       style: const TextStyle(color: Colors.white54, fontSize: 11),
                     ),
 
@@ -522,13 +572,26 @@ class _AntiCheatDialogState extends State<AntiCheatDialog> {
                     ],
 
                     const SizedBox(height: 12),
-                    TextField(
+                    // Undo/redo would bring back the text wiped by a typo: disabled, and the
+                    // field is recreated on each reset so no undo history survives.
+                    Actions(
+                      actions: <Type, Action<Intent>>{
+                        UndoTextIntent: DoNothingAction(consumesKey: true),
+                        RedoTextIntent: DoNothingAction(consumesKey: true),
+                        // No pasting: Ctrl+V / Shift+Insert.
+                        PasteTextIntent: DoNothingAction(consumesKey: true),
+                      },
+                      child: TextField(
+                      key: ValueKey('challenge_$_challengeResets'),
+                      // No right-click menu (it offered "Paste").
+                      contextMenuBuilder: null,
+                      focusNode: _challengeFocus,
                       controller: _challengeController,
                       onChanged: _onChallengeTextChanged,
                       maxLines: 3,
                       style: const TextStyle(color: Colors.white, fontSize: 13),
                       decoration: InputDecoration(
-                        hintText: 'Comece a digitar o texto aqui...',
+                        hintText: tr.comeceADigitarOTextoAqui,
                         hintStyle: const TextStyle(color: Colors.white30),
                         filled: true,
                         fillColor: const Color(0xFF141721),
@@ -538,6 +601,7 @@ class _AntiCheatDialogState extends State<AntiCheatDialog> {
                           borderSide: const BorderSide(color: Colors.cyanAccent),
                         ),
                       ),
+                    ),
                     ),
                     const SizedBox(height: 12),
 
@@ -552,14 +616,14 @@ class _AntiCheatDialogState extends State<AntiCheatDialog> {
                       onPressed: _challengeProgress == _state!.challengeText.length
                           ? _disableWithChallenge
                           : null,
-                      child: const Text('DESTRAVAR ANTI-CHEAT'),
+                      child: Text(tr.destravarAntiCheat),
                     ),
                   ],
                 ),
               ),
             ],
-            const SizedBox(height: 16),
-            ElevatedButton.icon(
+            if (ChronosProfile.isDev) const SizedBox(height: 16),
+            if (ChronosProfile.isDev) ElevatedButton.icon(
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.purple.shade800,
                 foregroundColor: Colors.white,
@@ -567,7 +631,7 @@ class _AntiCheatDialogState extends State<AntiCheatDialog> {
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
               ),
               icon: const Icon(Icons.bug_report, size: 20),
-              label: const Text('🛠️ Debug: Desativar Anti-Cheat Imediatamente'),
+              label: Text(tr.debugDesativarAntiCheatImediatamente),
               onPressed: () async {
                 await debugDisableAntiCheat();
                 notifyAntiCheatStateChanged();
@@ -575,8 +639,8 @@ class _AntiCheatDialogState extends State<AntiCheatDialog> {
                 await _loadState();
                 if (mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('🛠️ [DEBUG] Anti-Cheat e Nuke desativados com sucesso!'),
+                    SnackBar(
+                      content: Text(tr.debugAntiCheatENukeDesativados),
                       backgroundColor: Colors.purple,
                     ),
                   );
@@ -594,7 +658,7 @@ class _AntiCheatDialogState extends State<AntiCheatDialog> {
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
             ),
             icon: const Icon(Icons.extension_rounded),
-            label: const Text('Instalar / Atualizar Extensão em Todos Navegadores'),
+            label: Text(tr.instalarAtualizarExtensaoEmTodosNavegadores),
             onPressed: () async {
               final res = await BrowserExtensionInstaller.installAll(
                 isAntiCheatActive: _state?.isActive ?? false,

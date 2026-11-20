@@ -15,6 +15,11 @@ TARGET_HOME="$(getent passwd "$TARGET_USER" | cut -d: -f6)"
 install -d -m 0755 /usr/local/lib/chronos /usr/local/bin
 install -m 0755 -o root -g root "$SCRIPT_DIR/chronos-guard" /usr/local/lib/chronos/chronos-guard
 ln -sf /usr/local/lib/chronos/chronos-guard /usr/local/bin/chronos-guard
+# Root vault of the layered anti-cheat (state copy, daemon watchdog, trusted clock).
+if [ -f "$SCRIPT_DIR/chronos_vault" ]; then
+  install -m 0755 -o root -g root "$SCRIPT_DIR/chronos_vault" /usr/local/lib/chronos/chronos_vault
+  install -d -m 0755 -o root -g root /var/lib/chronos /var/lib/chronos/vault
+fi
 
 # 2. Instala pacotes CRX3 / XPI, config, Root CA público e PAC no store protegido
 install -d -m 0755 /usr/local/share/chronos
@@ -47,6 +52,27 @@ cat > /usr/share/polkit-1/actions/org.chronos.guard.policy <<'EOF'
 EOF
 chmod 0644 /usr/share/polkit-1/actions/org.chronos.guard.policy
 
+cat > /usr/share/polkit-1/actions/org.chronos.vault.policy <<'VAULTPOLICY'
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE policyconfig PUBLIC
+ "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/PolicyKit/1/policyconfig.dtd">
+<policyconfig>
+  <vendor>Chronos</vendor>
+  <action id="org.chronos.vault.run">
+    <description>Chronos anti-cheat vault</description>
+    <message>Autenticação necessária para alterar o cofre do Chronos</message>
+    <defaults>
+      <allow_any>auth_admin</allow_any>
+      <allow_inactive>auth_admin</allow_inactive>
+      <allow_active>auth_admin</allow_active>
+    </defaults>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/local/lib/chronos/chronos_vault</annotate>
+  </action>
+</policyconfig>
+VAULTPOLICY
+chmod 0644 /usr/share/polkit-1/actions/org.chronos.vault.policy
+
 # 4. Regra polkit: libera SEM senha apenas subcomandos que reforçam/atualizam proteção.
 install -d -m 0755 /etc/polkit-1/rules.d
 ESCAPED_HOME="${TARGET_HOME//\//\\/}"
@@ -57,7 +83,16 @@ polkit.addRule(function(action, subject) {
     if (cmd === "/usr/local/lib/chronos/chronos-guard apply" ||
         cmd === "/usr/local/lib/chronos/chronos-guard apply --quiet" ||
         /^\/usr\/local\/lib\/chronos\/chronos-guard update-crx ${ESCAPED_HOME}\/\.local\/share\/chronos\/guard\/build\/chronos\.crx [0-9.]+$/.test(cmd) ||
-        cmd === "/usr/local/lib/chronos/chronos-guard update-ca ${TARGET_HOME}/.local/share/chronos/ca/chronos-proxy-ca.crt ${TARGET_HOME}/.local/share/chronos/proxy.pac") {
+        cmd === "/usr/local/lib/chronos/chronos-guard update-ca ${TARGET_HOME}/.local/share/chronos/ca/chronos-proxy-ca.crt ${TARGET_HOME}/.local/share/chronos/proxy.pac" ||
+        /^\/usr\/local\/lib\/chronos\/chronos-guard set-dns (adguard|cloudflare|opendns) 1$/.test(cmd) ||
+        cmd === "/usr/local/lib/chronos/chronos-guard set-incognito 1") {
+      return polkit.Result.YES;
+    }
+  }
+  // Vault unlock checks the challenge text itself (sent on stdin).
+  if (action.id === "org.chronos.vault.run" && subject.user === "$TARGET_USER") {
+    var vcmd = action.lookup("command_line") || "";
+    if (/^\/usr\/local\/lib\/chronos\/chronos_vault unlock --user $TARGET_USER --db ${ESCAPED_HOME}\/[^ ]+\.db$/.test(vcmd)) {
       return polkit.Result.YES;
     }
   }

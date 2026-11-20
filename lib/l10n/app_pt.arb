@@ -1,0 +1,1664 @@
+{
+  "@@locale": "pt",
+  "chronosAntiCheatStrictFocusEngine": "Chronos - Anti-Burla & Strict Focus Engine",
+  "chronosFocusEngine": "Chronos Focus Engine",
+  "reiniciarBancoDeDados": "Reiniciar Banco de Dados?",
+  "desejaResetarCompletamenteOSqliteIntervalos": "Deseja resetar completamente o SQLite? Intervalos serão limpos, a catraca será destravada e a configuração inicial será reiniciada.",
+  "cancelar": "Cancelar",
+  "reiniciarTudo": "Reiniciar Tudo",
+  "parentalPai": "Parental (Pai)",
+  "parentalFilho": "Parental (Filho)",
+  "autoControle": "Auto-Controle",
+  "focoP0": "Foco: {p0}",
+  "@focoP0": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "autoDeteccaoAtiva": "Auto-Detecção Ativa",
+  "deteccaoAutomatica": "Detecção Automática",
+  "antiCheatOff": "Anti-Burla: OFF",
+  "nukeP0DP1": "Nuke: {p0}d {p1}",
+  "@nukeP0DP1": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      },
+      "p1": {
+        "type": "Object"
+      }
+    }
+  },
+  "nukeP0": "Nuke: {p0}",
+  "@nukeP0": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "antiCheatAtivo": "Anti-Burla Ativo",
+  "refazerCadastroTrocarModo": "Refazer Cadastro / Trocar Modo",
+  "instalarExtensoesNosNavegadores": "Instalar Extensões nos Navegadores",
+  "sairDoAntiCheatDebug": "🛠️ Sair do Anti-Burla (Debug)",
+  "reiniciarBancoCompleto": "Reiniciar Banco Completo",
+  "zerarConsumoDiario": "Zerar Consumo Diário",
+  "destravarCatracaP0": "Destravar Catraca ({p0})",
+  "@destravarCatracaP0": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "restaurarTokens2": "Restaurar Tokens (+2)",
+  "tempoDeTela": "Tempo de Tela",
+  "monitorEmTempoReal": "Monitor em tempo real",
+  "estatisticas": "Estatísticas",
+  "metricasDeConsumo": "Métricas de consumo",
+  "regrasWhitelist": "Regras & Whitelist",
+  "limitesEGrupos": "Limites e grupos",
+  "configuracoes": "Configurações",
+  "aparenciaEAlertas": "Aparência e alertas",
+  "quarentena": "Quarentena",
+  "modoNukeBloqueios": "Modo nuke & bloqueios",
+  "sqliteTestes": "SQLite / Testes",
+  "depuracaoDoBanco": "Depuração do banco",
+  "chronos": "Chronos",
+  "focusEngine": "Focus Engine",
+  "alternarParaModoClaro": "Alternar para Modo Claro",
+  "alternarParaModoEscuro": "Alternar para Modo Escuro",
+  "modoClaro": "Modo Claro",
+  "modoEscuro": "Modo Escuro",
+  "estatisticasDeConsumoHistorico": "Estatísticas de Consumo & Histórico",
+  "regrasDeBloqueioWhitelist": "Regras de Bloqueio & Whitelist",
+  "configuracoesGeraisNotificacoes": "Configurações Gerais & Notificações",
+  "quarentenaModoNuke": "Quarentena & Modo Nuke",
+  "bancoDeDadosTestesSqlite": "Banco de Dados & Testes SQLite",
+  "debugSairDoAntiCheat": "🛠️ [DEBUG] Sair do Anti-Burla",
+  "instalarExtensoesEmNavegadores": "Instalar Extensões em Navegadores",
+  "acoesGlobais": "Ações Globais",
+  "telaDeCadastro": "Tela de Cadastro",
+  "debugSairDoAntiCheatImediatamente": "🛠️ [DEBUG] Sair do Anti-Burla Imediatamente",
+  "instalarExtensoesEmTodosNavegadores": "Instalar Extensões em Todos Navegadores",
+  "acoesConfiguracao": "Ações & Configuração",
+  "tempo": "Tempo",
+  "metricas": "Métricas",
+  "regras": "Regras",
+  "ajustes": "Ajustes",
+  "nuke": "Nuke",
+  "sqlite": "SQLite",
+  "sincronizandoComOMotorDeMonitoramento": "Sincronizando com o motor de monitoramento...",
+  "tentarConectarAgora": "Tentar Conectar Agora",
+  "etapaInicialTesteAQualquerMomento": "Etapa Inicial: teste a qualquer momento o cadastro e personalização de bloqueios.",
+  "voltarAoCadastro": "Voltar ao Cadastro",
+  "p0SessoesAtivasSimultaneamenteOTempo": "⚡ {p0} Sessões Ativas Simultaneamente! O tempo de tela está sendo cronometrado em paralelo.",
+  "@p0SessoesAtivasSimultaneamenteOTempo": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "sessao": "Sessão",
+  "emExecucao": "Em execução",
+  "tempoAtivo": "TEMPO ATIVO",
+  "consumidoHojeP0": "Consumido hoje: {p0}",
+  "@consumidoHojeP0": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "limiteP0P1": "Limite: {p0} ({p1}%)",
+  "@limiteP0P1": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      },
+      "p1": {
+        "type": "Object"
+      }
+    }
+  },
+  "catracaAtiva": "Catraca Ativa",
+  "tokensP02": "Tokens: {p0}/2",
+  "@tokensP02": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "limiteDeTempoDeTelaP0": "Limite de tempo de tela: {p0} ({p1}%)",
+  "@limiteDeTempoDeTelaP0": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      },
+      "p1": {
+        "type": "Object"
+      }
+    }
+  },
+  "controlesDeTempoDeTelaCatraca": "Controles de Tempo de Tela & Catraca (Ratchet)",
+  "reduzirTempoDeTelaTeste15s": "Reduzir Tempo de Tela (Teste 15s)",
+  "tentarAumentarTempoDeTela2h": "Tentar Aumentar Tempo de Tela (+2h)",
+  "trancarCatraca24h": "Trancar Catraca (24h)",
+  "catracaTrancadaPor24hAumentosProibidos": "Catraca trancada por 24h! Aumentos proibidos.",
+  "usarTokenDeEmergencia1h": "Usar Token de Emergência (+1h)",
+  "bemVindoAoChronos": "Bem-vindo ao Chronos",
+  "seuMotorDeFocoEstritoE": "Seu motor de foco estrito e produtividade para Linux.\nComo você pretende utilizar este aplicativo?",
+  "controlePessoalAutoControle": "Controle Pessoal (Auto-Controle)",
+  "paraGerenciarSeuProprioTempoE": "Para gerenciar seu próprio tempo e estudos.",
+  "modoCatracaRatchetReducoesSaoImediatas": "Modo Catraca (Ratchet): Reduções são imediatas, aumentos são bloqueados.",
+  "t2TokensMensaisDeEmergencia1h": "2 Tokens mensais de emergência (+1h com penalidade de 24h de lazer travado).",
+  "bloqueioAtivoComSobreposicaoDeJanela": "Bloqueio ativo com sobreposição de janela e pausa automática de mídia.",
+  "configurarBloqueiosPessoais": "Configurar Bloqueios Pessoais",
+  "controleParentalSupervisao": "Controle Parental (Supervisão)",
+  "paraPaisEResponsaveisGerenciaremDispositivos": "Para pais e responsáveis gerenciarem dispositivos de dependentes.",
+  "dispositivoDoDependenteProtegidoContraAlteracoes": "Dispositivo do dependente protegido contra alterações e desvios.",
+  "pareamentoSeguroViaQrCodeOu": "Pareamento seguro via QR Code ou Senha mestra.",
+  "gestaoDeAprovacaoDeBinariosE": "Gestão de aprovação de binários e quarentena de aplicativos.",
+  "configurarControleParental": "Configurar Controle Parental",
+  "personalizacaoDeBloqueioTempoDeTela": "Personalização de Bloqueio & Tempo de Tela",
+  "ajusteOTempoDeTelaDiario": "Ajuste o tempo de tela diário inicial e o nível de atrito estrito",
+  "distracoesABloquear": "Distrações a Bloquear",
+  "adicionarAppOuSite": "Adicionar App ou Site",
+  "nenhumaSessaoPreConfiguradaCliqueEm": "Nenhuma sessão pré-configurada.\nClique em \"Adicionar App ou Site\" acima para criar suas sessões personalizadas.",
+  "tempoDeTelaDiario": "Tempo de Tela Diário:",
+  "bloqueioTotal": "Bloqueio Total",
+  "t15Min": "15 min",
+  "t30Min": "30 min",
+  "t1Hora": "1 hora",
+  "t2Horas": "2 horas",
+  "diretrizesDeEnforcementDoChronos": "Diretrizes de Enforcement do Chronos",
+  "ativarTravaDaCatraca24hIniciais": "Ativar Trava da Catraca (24h iniciais)",
+  "impedeAumentosDeTempoDeTela": "Impede aumentos de tempo de tela logo no primeiro dia. Você só poderá reduzir o tempo de tela.",
+  "sequestroVisualDeFocoAlwaysOn": "Sequestro Visual de Foco (Always-on-top Fullscreen)",
+  "maximizaETravaAJanelaDo": "Maximiza e trava a janela do Chronos por cima ao estourar o tempo de tela.",
+  "pausaAtivaDeMidiaPlayerctlMpris2": "Pausa Ativa de Mídia (playerctl / MPRIS2)",
+  "interrompeAutomaticamenteVideosEMusicasEm": "Interrompe automaticamente vídeos e músicas em segundo plano.",
+  "salvarBloqueiosEIniciarChronos": "Salvar Bloqueios e Iniciar Chronos",
+  "controleParental": "Controle Parental",
+  "qualEOPapelDesteComputador": "Qual é o papel deste computador na família?",
+  "dispositivoDoResponsavelPaiMae": "Dispositivo do Responsável (Pai / Mãe)",
+  "esteComputadorTeraAutoridadeParaControlar": "Este computador terá autoridade para controlar regras e tempo de tela.",
+  "recebeSolicitacoesDeEmergenciaEAprovacoes": "Recebe solicitações de emergência e aprovações de quarentena.",
+  "conectaAoComputadorDoFilhoUsando": "Conecta ao computador do filho usando QR Code ou Senha.",
+  "configurarComoDispositivoPai": "Configurar como Dispositivo Pai",
+  "dispositivoDoDependenteFilho": "Dispositivo do Dependente (Filho)",
+  "esteComputadorSeraMonitoradoEProtegido": "Este computador será monitorado e protegido contra distrações.",
+  "asAlteracoesDeTempoDeTela": "As alterações de tempo de tela exigem autorização ou senha do responsável.",
+  "exibeQrCodeECodigoPin": "Exibe QR Code e código PIN para ser conectado pelo responsável.",
+  "configurarComoDispositivoFilho": "Configurar como Dispositivo Filho",
+  "chronosPairCodeP0": "chronos://pair?code={p0}",
+  "@chronosPairCodeP0": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "pareamentoDispositivoFilho": "Pareamento: Dispositivo Filho",
+  "pareamentoDispositivoDoResponsavel": "Pareamento: Dispositivo do Responsável",
+  "conecteEsteComputadorAoAplicativoDo": "Conecte este computador ao aplicativo do responsável utilizando QR Code ou Código PIN/Senha.",
+  "escaneieOQrCodeOuInsira": "Escaneie o QR Code ou insira o Código PIN exibido na tela do dispositivo do filho.",
+  "viaQrCode": "Via QR Code",
+  "viaSenhaPin": "Via Senha / PIN",
+  "concluirEIniciarProtecao": "Concluir e Iniciar Proteção",
+  "concluirEAbrirPainelDoResponsavel": "Concluir e Abrir Painel do Responsável",
+  "protecaoObrigatoriaEmTodosOsNavegadores": "Proteção Obrigatória em Todos os Navegadores",
+  "configuraTodosOsNavegadoresDoDispositivo": "Configura todos os navegadores do dispositivo para exibir o tempo restante de uso e aplicar filtros HTML/CSS (Shorts, Feed da Home, Grayscale). A remoção só é liberada após verificação Anti-Burla.",
+  "instalandoConfigurando": "Instalando & Configurando...",
+  "instalarAtualizarEmTodosOsNavegadores": "Instalar / Atualizar em Todos os Navegadores",
+  "terminalAbertoDigiteSuaSenhaSudo": "Terminal aberto! Digite sua senha sudo uma vez para concluir o Guard.",
+  "executeManualmenteP0": "Execute manualmente: {p0}",
+  "@executeManualmenteP0": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "terminalAbertoDigiteSuaSenhaSudo2": "Terminal aberto! Digite sua senha sudo uma única vez.",
+  "executeNoTerminalP0": "Execute no terminal: {p0}",
+  "@executeNoTerminalP0": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "aponteODispositivoDoResponsavelPara": "Aponte o dispositivo do responsável para escanear este QR Code.",
+  "seEstiverUsandoAVersaoMobile": "Se estiver usando a versão mobile ou câmera, aponte para o QR Code na tela do filho.",
+  "ouColeAChaveUriDo": "Ou cole a chave/URI do QR Code aqui",
+  "chronosPairId": "chronos://pair?id=...",
+  "codigoPinDePareamentoDesteDispositivo": "Código PIN de Pareamento deste Dispositivo:",
+  "definirSenhaMestraDeDesbloqueioLocal": "Definir Senha Mestra de Desbloqueio Local (Opcional)",
+  "digiteUmaSenhaParaAlterarTempo": "Digite uma senha para alterar tempo de tela presencialmente",
+  "digiteOCodigoPinOuSenha": "Digite o Código PIN ou Senha exibida na tela do filho:",
+  "chrXxxxOuSenha": "CHR-XXXX ou Senha",
+  "validarEParear": "Validar e Parear",
+  "orgKdeStatusnotifierwatcher": "org.kde.StatusNotifierWatcher",
+  "abrirChronos": "Abrir Chronos",
+  "desinstalarChronos": "Desinstalar Chronos…",
+  "antiBurlaAtivoOChronosNao": "Anti-Burla ativo: o Chronos não pode ser desinstalado enquanto ele estiver ligado.",
+  "chronosFocus": "Chronos Focus",
+  "chronosMonitoramentoAtivo": "Chronos - Monitoramento Ativo",
+  "oAplicativoP0EstaSendoMonitorado": "O aplicativo \"{p0}\" está sendo monitorado na sessão \"{p1}\".",
+  "@oAplicativoP0EstaSendoMonitorado": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      },
+      "p1": {
+        "type": "Object"
+      }
+    }
+  },
+  "chronosTempoDeTelaRestante": "Chronos - Tempo de Tela Restante",
+  "p0RestamApenasP1MinutoP2": "{p0}: Restam apenas {p1} min de tempo de tela!",
+  "@p0RestamApenasP1MinutoP2": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      },
+      "p1": {
+        "type": "Object"
+      }
+    }
+  },
+  "chronosTempoDeTelaEsgotado": "Chronos - Tempo de Tela Esgotado",
+  "p0OTempoDeTelaDiario": "{p0}: O tempo de tela diário foi completamente esgotado!",
+  "@p0OTempoDeTelaDiario": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "chronosAlertaPeriodicoP0Min": "Chronos - Alerta Periódico ({p0} min)",
+  "@chronosAlertaPeriodicoP0Min": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "p0P1MinUtilizadosHojeRestam": "{p0}: {p1} min utilizados hoje • Restam {p2} min de tempo de tela.",
+  "@p0P1MinUtilizadosHojeRestam": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      },
+      "p1": {
+        "type": "Object"
+      },
+      "p2": {
+        "type": "Object"
+      }
+    }
+  },
+  "todas": "Todas",
+  "jogos": "Jogos",
+  "navegadores": "Navegadores",
+  "comunicacao": "Comunicação",
+  "internet": "Internet",
+  "midia": "Mídia",
+  "desenvolvimento": "Desenvolvimento",
+  "escritorio": "Escritório",
+  "graficos": "Gráficos",
+  "educacao": "Educação",
+  "sistema": "Sistema",
+  "utilitarios": "Utilitários",
+  "outros": "Outros",
+  "adicionarTagP0": "Adicionar Tag: {p0}",
+  "@adicionarTagP0": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "nomeDaTagExRedesSociais": "Nome da Tag (ex: Redes Sociais, Trabalho, Jogos)",
+  "adicionarTag": "Adicionar Tag",
+  "p0JaFoiAdicionadoAoGrupo": "\"{p0}\" já foi adicionado ao grupo.",
+  "@p0JaFoiAdicionadoAoGrupo": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "sessaoDeFoco": "Sessão de Foco",
+  "listaBranca": "Lista Branca",
+  "selecionePeloMenosUmAplicativoOu": "Selecione pelo menos um aplicativo ou site para o grupo.",
+  "p0HP1Min": "{p0} h {p1} min",
+  "@p0HP1Min": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      },
+      "p1": {
+        "type": "Object"
+      }
+    }
+  },
+  "editarGrupoDeListaBranca": "Editar Grupo de Lista Branca",
+  "novoGrupoDeListaBranca": "Novo Grupo de Lista Branca",
+  "adicionarAplicativosSitesAoGrupo": "Adicionar Aplicativos / Sites ao Grupo",
+  "editarSessaoDeFoco": "Editar Sessão de Foco",
+  "criarSessaoDeFoco": "Criar Sessão de Foco",
+  "appsESitesNaListaBranca": "Apps e sites na lista branca NUNCA serão bloqueados nem finalizados, mesmo se estiverem em outros grupos.",
+  "digiteONomeDoGrupoDe": "Digite o nome do grupo de lista branca (ex: Ferramentas de Estudo)...",
+  "digiteONomeDaSessaoDe": "Digite o nome da sessão de foco (ex: Distrações e Lazer)...",
+  "nomeDoGrupoDeListaBranca": "Nome do Grupo de Lista Branca",
+  "nomeDaSessaoDeFoco": "Nome da Sessão de Foco",
+  "aplicativosP0": "Aplicativos ({p0})",
+  "@aplicativosP0": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "sitesEPalavrasP0": "Sites e Palavras ({p0})",
+  "@sitesEPalavrasP0": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "youtubeP0": "YouTube ({p0})",
+  "@youtubeP0": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "p0AppsP1Sites": "{p0} apps • {p1} sites",
+  "@p0AppsP1Sites": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      },
+      "p1": {
+        "type": "Object"
+      }
+    }
+  },
+  "salvarListaBranca": "Salvar Lista Branca",
+  "salvarAppsNoGrupo": "Salvar Apps no Grupo",
+  "avancarTempoDeTelaRegras": "Avançar: Tempo de Tela & Regras",
+  "buscarPorNomeExecutavelOuTag": "Buscar por nome, executável ou tag (ex: Jogos, Mídia)...",
+  "selecionarTudo": "Selecionar Tudo",
+  "limpar": "Limpar",
+  "carregandoAplicativosInstalados": "Carregando aplicativos instalados...",
+  "nenhumAplicativoEncontradoParaOFiltro": "Nenhum aplicativo encontrado para o filtro/tag.",
+  "limparFiltroDeTag": "Limpar Filtro de Tag",
+  "jaNoGrupo": "Já no grupo",
+  "tag": "+ Tag",
+  "videosDessesTiposNaoDescontamO": "Vídeos desses tipos não descontam o tempo de tela do YouTube. Use o teto para limitar quanto tempo por dia fica isento (vazio = sem teto).",
+  "tetoMinDia": "Teto (min/dia)",
+  "semTeto": "sem teto",
+  "digiteDominioOuPalavraChaveEx": "Digite domínio ou palavra-chave (ex: youtube.com, reels, shorts)...",
+  "adicionar": "Adicionar",
+  "sitesEPalavrasChaveAdicionadosP0": "Sites e Palavras-Chave Adicionados ({p0}):",
+  "@sitesEPalavrasChaveAdicionadosP0": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "limparNovos": "Limpar Novos",
+  "limparTodos": "Limpar Todos",
+  "nenhumSiteOuPalavraChaveAdicionado": "Nenhum site ou palavra-chave adicionado ainda nesta sessão.",
+  "p0JaNoGrupo": "{p0} (Já no grupo)",
+  "@p0JaNoGrupo": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "editarTempoDeBloqueioP0": "Editar Tempo de Bloqueio: {p0}",
+  "@editarTempoDeBloqueioP0": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "tempoDeTelaP0": "Tempo de Tela: {p0}",
+  "@tempoDeTelaP0": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "sessaoP0": "Sessão: {p0}",
+  "@sessaoP0": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "grupoDeFocoUnificado": "GRUPO DE FOCO UNIFICADO",
+  "p0AplicativosEP1SitesInclusos": "{p0} aplicativos e {p1} sites inclusos.",
+  "@p0AplicativosEP1SitesInclusos": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      },
+      "p1": {
+        "type": "Object"
+      }
+    }
+  },
+  "todosOsAplicativosESitesDesta": "Todos os aplicativos e sites desta sessão compartilham a mesma cota diária de tempo de tela.",
+  "limiteDeTempoDeTelaRelogio": "Limite de Tempo de Tela (Relógio Digital):",
+  "bloqueioTotal2": "BLOQUEIO TOTAL",
+  "nenhumAcessoPermitidoDuranteODia": "Nenhum acesso permitido durante o dia",
+  "p0DeUsoPermitido": "{p0} de uso permitido",
+  "@p0DeUsoPermitido": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "bloquearTotalmente0MinDeTempo": "Bloquear Totalmente (0 min de tempo de tela)",
+  "impedeQualquerInicializacaoDoGrupoImediatamente": "Impede qualquer inicialização do grupo imediatamente",
+  "tempoDeTelaDiferenciadoNoFinal": "Tempo de tela diferenciado no Final de Semana",
+  "permiteConfigurarMaisTempoParaSabado": "Permite configurar mais tempo para sábado e domingo",
+  "tempoFimDeSemanaP0": "Tempo Fim de Semana: {p0}",
+  "@tempoFimDeSemanaP0": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "tempoDeTelaDiferenciadoEmFeriados": "Tempo de tela diferenciado em Feriados",
+  "valeNosFeriadosNacionaisENas": "Vale nos feriados nacionais e nas datas que você adicionar em Configurações. Tem prioridade sobre o fim de semana.{p0}",
+  "@valeNosFeriadosNacionaisENas": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "tempoEmFeriadosP0": "Tempo em Feriados: {p0}",
+  "@tempoEmFeriadosP0": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "diasDaSemanaAtivos": "Dias da Semana Ativos:",
+  "todos": "Todos",
+  "diasUteis": "Dias Úteis",
+  "finsDeSemana": "Fins de Semana",
+  "seg": "Seg",
+  "ter": "Ter",
+  "qua": "Qua",
+  "qui": "Qui",
+  "sex": "Sex",
+  "sab": "Sáb",
+  "dom": "Dom",
+  "bloqueioPorJanelaDeHorario": "Bloqueio por Janela de Horário",
+  "bloqueiaOGrupoDentroDeUm": "Bloqueia o grupo dentro de um horário fixo do dia",
+  "inicioP0": "Início: {p0}",
+  "@inicioP0": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "fimP0": "Fim: {p0}",
+  "@fimP0": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "modo": "Modo:",
+  "bloquearDentro": "Bloquear Dentro",
+  "permitirSomenteDentro": "Permitir Somente Dentro",
+  "notificacaoPorTempoRestante": "Notificação por Tempo Restante",
+  "avisaAos155E1": "Avisa aos 15, 5 e 1 minuto restantes antes de encerrar o tempo de tela",
+  "notificacaoPeriodica": "Notificação Periódica",
+  "emiteLembretesRegularesEnquantoASessao": "Emite lembretes regulares enquanto a sessão estiver em uso",
+  "intervaloDaNotificacaoPeriodica": "Intervalo da Notificação Periódica:",
+  "aCadaP0Min": "A cada {p0} min",
+  "@aCadaP0Min": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "salvarGrupoDeFoco": "Salvar Grupo de Foco",
+  "permitaAExtensaoNoAnonimo": "Permita a extensão no anônimo",
+  "abrirNosNavegadores": "Abrir nos navegadores",
+  "entendi": "Entendi",
+  "guiaAnonimaBloqueadaNosNavegadores": "Guia anônima bloqueada nos navegadores.",
+  "guiaAnonimaLiberada": "Guia anônima liberada.",
+  "nenhumNavegadorChromiumEncontrado": "Nenhum navegador Chromium encontrado.",
+  "abertoEmP0": "Aberto em {p0}: ligue \"Permitir no modo anônimo\" na extensão Chronos.",
+  "@abertoEmP0": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "ativarProtecaoPorDns": "Ativar proteção por DNS?",
+  "oDnsFamiliaPassaAValer": "O DNS família passa a valer para o computador inteiro. Isso pode tirar funcionalidades de alguns apps e redes:\n\n• redes de faculdade, empresa ou hotel que bloqueiam DNS externo podem ficar sem internet;\n• sites e serviços internos da rede (intranet, impressoras por nome) podem não abrir;\n• VPNs, jogos online, apps de streaming ou containers (Docker) podem falhar em resolver endereços;\n• o DNS do roteador e o \"DNS seguro\" dos navegadores deixam de ser usados.\n\nDesligar depois pede a senha de administrador, e fica bloqueado com o Anti-Burla ativo.",
+  "entendiAtivar": "Entendi, ativar",
+  "filtroDeConteudoAdulto": "Filtro de Conteúdo Adulto",
+  "modoParentalOFiltroFicaSempre": "Modo parental: o filtro fica sempre ligado.",
+  "ativarFiltro": "Ativar filtro",
+  "bloqueiaSitesAdultosComATela": "Bloqueia sites adultos com a tela de bloqueio do Chronos.",
+  "bloquearGuiaAnonimaEConvidado": "Bloquear guia anônima e convidado",
+  "impedeJanelasAnonimasPrivadasEO": "Impede janelas anônimas/privadas e o modo convidado em todos os navegadores{p0}. Liberar pede senha de administrador e fica bloqueado com o Anti-Burla ativo.",
+  "@impedeJanelasAnonimasPrivadasEO": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "permitirAExtensaoNoAnonimoAbrir": "Permitir a extensão no anônimo (abrir nos navegadores)",
+  "extensaoPermitidaNoAnonimoEmP0": "Extensão permitida no anônimo em {p0} navegador(es) aberto(s).",
+  "@extensaoPermitidaNoAnonimoEmP0": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "extensaoSemPermissaoNoAnonimoEm": "Extensão sem permissão no anônimo em {p0} de {p1} navegador(es){p2}.",
+  "@extensaoSemPermissaoNoAnonimoEm": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      },
+      "p1": {
+        "type": "Object"
+      },
+      "p2": {
+        "type": "Object"
+      }
+    }
+  },
+  "filtroLigadoMasNadaEstaBloqueando": "Filtro ligado, mas nada está bloqueando: ligue a lista de sites adultos, o SafeSearch ou o DNS.",
+  "listaDeSitesAdultos": "Lista de sites adultos",
+  "p0SitesConhecidosAtualizaTodaSemana": "{p0} sites conhecidos (atualiza toda semana).",
+  "@p0SitesConhecidosAtualizaTodaSemana": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "baixandoALista": "Baixando a lista…",
+  "iaDeImagensLocal": "IA de imagens (local)",
+  "desfocaImagensAteUmModeloDe": "Desfoca imagens até um modelo de IA rodando no seu computador analisar; as +18 continuam desfocadas e páginas com várias são bloqueadas. Nada é enviado para fora.",
+  "safesearchForcado": "SafeSearch forçado",
+  "googleBingEDuckduckgoEmModo": "Google, Bing e DuckDuckGo em modo seguro; YouTube em Modo Restrito.",
+  "protecaoPorDnsComputadorInteiro": "Proteção por DNS (computador inteiro)",
+  "usaUmDnsFamiliaEmTodo": "Usa um DNS família em todo o sistema: vale para qualquer navegador e app. Aplicado pelo Chronos Guard (desligar pede senha de administrador).",
+  "servicoDeDnsFamilia": "Serviço de DNS família",
+  "dnsDoChronosDesligadoMasO": "DNS do Chronos desligado, mas o DNS da rede (roteador/provedor) já filtra conteúdo adulto — só vale nesta rede.",
+  "dnsDoSistemaNormalSemDns": "DNS do sistema: normal (sem DNS família).",
+  "dnsDoSistemaP0AtivoP1": "DNS do sistema: {p0} ativo{p1}.",
+  "@dnsDoSistemaP0AtivoP1": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      },
+      "p1": {
+        "type": "Object"
+      }
+    }
+  },
+  "registrarTentativas": "Registrar tentativas",
+  "anotaDataESiteDeCada": "Anota data e site de cada bloqueio{p0}.",
+  "@anotaDataESiteDeCada": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "ultimasTentativas": "Últimas tentativas",
+  "verHistoricoCompleto": "Ver histórico completo",
+  "excecoesSitesNuncaBloqueadosPorEste": "Exceções (sites nunca bloqueados por este filtro)",
+  "exSiteDaEscolaCom": "ex.: site-da-escola.com",
+  "hoje": "Hoje",
+  "t7Dias": "7 dias",
+  "t30Dias": "30 dias",
+  "tudo": "Tudo",
+  "listaDeSites": "lista de sites",
+  "reddit": "Reddit",
+  "iaDeImagens": "IA de imagens",
+  "historicoDeTentativas": "Histórico de tentativas",
+  "p0TentativaS": "{p0} tentativa(s)",
+  "@p0TentativaS": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "nenhumaTentativaNestePeriodo": "Nenhuma tentativa neste período.",
+  "fechar": "Fechar",
+  "p0HP1M": "{p0}h {p1}m",
+  "@p0HP1M": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      },
+      "p1": {
+        "type": "Object"
+      }
+    }
+  },
+  "semDados": "Sem dados",
+  "estatisticasDeTempoDeTela": "Estatísticas de Tempo de Tela",
+  "consumoConsolidadoTendenciasSemanaisERanking": "Consumo consolidado, tendências semanais e ranking de aplicativos e sites.",
+  "atualizar": "Atualizar",
+  "consumoHoje": "Consumo Hoje",
+  "tempoEmAppsSitesMonitorados": "Tempo em apps/sites monitorados",
+  "mediaSemanal": "Média Semanal",
+  "baseadoNosUltimos7Dias": "Baseado nos últimos 7 dias",
+  "diaDePico": "Dia de Pico",
+  "tendenciaVsSemanaAnterior": "Tendência vs. Semana Anterior",
+  "estavel": "Estável",
+  "maisTempoDeTela": "Mais tempo de tela",
+  "menosTempoDeTela": "Menos tempo de tela",
+  "appsSitesMonitorados": "Apps/sites monitorados",
+  "mediaDiaria": "Média Diária",
+  "ultimos7Dias": "Últimos 7 dias",
+  "tendencia": "Tendência",
+  "maisTela": "Mais tela",
+  "menosTela": "Menos tela",
+  "tempoIsentoNoYoutubeListaBranca": "Tempo Isento no YouTube (Lista Branca)",
+  "p0P1Em7Dias": "{p0}: {p1} em 7 dias",
+  "@p0P1Em7Dias": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      },
+      "p1": {
+        "type": "Object"
+      }
+    }
+  },
+  "consumoDiarioNosUltimos7Dias": "Consumo Diário nos Últimos 7 Dias",
+  "totalP0": "Total: {p0}",
+  "@totalP0": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "nenhumDadoDiarioRegistrado": "Nenhum dado diário registrado.",
+  "top5AppsSitesMaisConsumidos": "Top 5 Apps & Sites Mais Consumidos (Últimos 7 Dias)",
+  "nenhumaAtividadeRegistradaNaSemanaAinda": "Nenhuma atividade registrada na semana ainda.",
+  "p0DoTotal": "{p0}% do total",
+  "@p0DoTotal": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "colarNaoEPermitidoDigiteO": "❌ Colar não é permitido: digite o texto.",
+  "erroDetectadoNoModoStayfocusdQualquer": "❌ Erro detectado! No modo StayFocusd, qualquer caractere incorreto reseta o texto por completo. Digite com atenção máxima!",
+  "selecioneUmaDuracaoValidaMaiorQue": "Selecione uma duração válida maior que 0 minutos para o Modo Nuke.",
+  "ativarOAntiBurla": "Ativar o Anti-Burla?",
+  "enquantoOAntiBurlaEstiverAtivo": "Enquanto o Anti-Burla estiver ativo:\n\n• o Chronos NÃO poderá ser desinstalado;\n• ele continua rodando em segundo plano e reabre sozinho se for fechado;\n• regras, filtros e extensões não podem ser afrouxados.\n\n{p0}",
+  "@enquantoOAntiBurlaEstiverAtivo": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "noModoNukeIssoSoAcaba": "No Modo Nuke isso só acaba quando o tempo terminar.",
+  "paraDesativarSeraPrecisoCompletarO": "Para desativar será preciso completar o desafio.",
+  "modoNukeAtivadoPorP0Configuracoes": "☢️ Modo Nuke Ativado por {p0}! Configurações e extensões travadas.",
+  "@modoNukeAtivadoPorP0Configuracoes": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "modoAntiCheatAtivadoComDesafio": "🛡️ Modo Anti-Burla Ativado com Desafio Estrito!",
+  "erroAoAtivarP0": "Erro ao ativar: {p0}",
+  "@erroAoAtivarP0": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "antiCheatDesativadoComSucessoModificacoes": "🔓 Anti-Burla desativado com sucesso! Modificações liberadas.",
+  "erroP0": "Erro: {p0}",
+  "@erroP0": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "protecaoAntiCheatAtiva": "Proteção Anti-Burla Ativa",
+  "configurarModoAntiCheat": "Configurar Modo Anti-Burla",
+  "oAntiCheatImpedeVoceDe": "O Anti-Burla impede você de burlar o Chronos, bloquear ou aumentar limites nos momentos de fraqueza, e protege a extensão contra remoção.",
+  "escolhaOMetodoDeTravamento": "Escolha o Método de Travamento:",
+  "desafioDeDigitacaoEstritoEstiloStayfocusd": "Desafio de Digitação Estrito (Estilo StayFocusd)",
+  "qualquerTentativaDeDesativarOuAumentar": "Qualquer tentativa de desativar ou aumentar limites de tempo de tela exige redigitar um texto de compromisso extenso sem nenhum erro. Errou um caractere? O texto é resetado!",
+  "modoNukeBloqueioTotalPorTempo": "Modo Nuke (Bloqueio Total por Tempo)",
+  "trava100OChronosPorUm": "Trava 100% o Chronos por um período de tempo. Durante esse período, NÃO EXISTE forma de destravar ou alterar nada até o tempo acabar.",
+  "duracaoDoTravamentoNukeScrollPara": "Duração do Travamento Nuke (Scroll para ajustar):",
+  "ativarModoNukeP0": "ATIVAR MODO NUKE ({p0})",
+  "@ativarModoNukeP0": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "ativarAntiCheatRestrito": "ATIVAR ANTI-CHEAT RESTRITO",
+  "modoNukeEmAndamento": "MODO NUKE EM ANDAMENTO",
+  "nenhumaAlteracaoDeTempoDeTela": "Nenhuma alteração de tempo de tela, regra ou desinstalação de extensão é permitida até que este tempo expire.",
+  "desafioDeDigitacaoStayfocusd": "Desafio de Digitação StayFocusd",
+  "paraDestravarOAplicativoELiberar": "Para destravar o aplicativo e liberar edições, digite exatamente o texto abaixo sem cometer um único erro:",
+  "progressoP0P1Caracteres": "Progresso: {p0} / {p1} caracteres",
+  "@progressoP0P1Caracteres": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      },
+      "p1": {
+        "type": "Object"
+      }
+    }
+  },
+  "comeceADigitarOTextoAqui": "Comece a digitar o texto aqui...",
+  "destravarAntiCheat": "DESTRAVAR ANTI-CHEAT",
+  "debugDesativarAntiCheatImediatamente": "🛠️ Debug: Desativar Anti-Burla Imediatamente",
+  "debugAntiCheatENukeDesativados": "🛠️ [DEBUG] Anti-Burla e Nuke desativados com sucesso!",
+  "instalarAtualizarExtensaoEmTodosNavegadores": "Instalar / Atualizar Extensão em Todos Navegadores",
+  "pacoteEmbutido": "Pacote Embutido",
+  "atualizarGuard": "Atualizar Guard",
+  "politicaGuard": "Política Guard",
+  "ativoNosNavegadores": "Ativo nos Navegadores",
+  "nenhumNavegadorSuportadoDetectado": "Nenhum navegador suportado detectado.",
+  "protegidoPeloProxySeletivoLocal127": "Protegido pelo Proxy Seletivo Local (127.0.0.1:4546) + Certificado CA — o Firefox Release não lista .xpi sem assinatura Mozilla em about:addons, mas bloqueios e filtros HTML/CSS operam normalmente.",
+  "instalacaoManualFallbackAvancado": "Instalação Manual / Fallback Avançado",
+  "baixarChromeZip": "Baixar Chrome (.zip)",
+  "extensaoSalvaEmP0": "Extensão salva em: {p0}",
+  "@extensaoSalvaEmP0": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "erroAoSalvarZipEmDownloads": "Erro ao salvar zip em Downloads.",
+  "baixarFirefoxXpi": "Baixar Firefox (.xpi)",
+  "erroAoSalvarXpiEmDownloads": "Erro ao salvar xpi em Downloads.",
+  "ativarNoChromeManual": "Ativar no Chrome (Manual)",
+  "ativarNoFirefoxManual": "Ativar no Firefox (Manual)",
+  "comandoTerminalGuard": "Comando Terminal (Guard)",
+  "reiniciarNavegadoresParaAtivar": "Reiniciar Navegadores para Ativar?",
+  "osSeguintesNavegadoresJaEstaoAbertos": "Os seguintes navegadores já estão abertos e precisam ser fechados e reabertos para carregar a extensão Chronos:\n\n{p0}\n\nDeseja fechar e reabrir esses navegadores agora?",
+  "@osSeguintesNavegadoresJaEstaoAbertos": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "agoraNao": "Agora Não",
+  "fecharEReabrirAgora": "Fechar e Reabrir Agora",
+  "navegadoresReiniciadosP0": "Navegadores reiniciados ({p0})!",
+  "@navegadoresReiniciadosP0": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "acessoBloqueadoPeloChronos": "ACESSO BLOQUEADO PELO CHRONOS",
+  "oTempoDeTelaDiarioPara": "O tempo de tela diário para {p0} foi completamente esgotado.",
+  "@oTempoDeTelaDiarioPara": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "reproducaoMprisPausadaAutomaticamente": "Reprodução MPRIS pausada automaticamente.",
+  "janelaSobrepostaAtivaEnquantoOApp": "Janela sobreposta ativa enquanto o app distrator estiver em foco.",
+  "usarTokenDeEmergencia1hP0": "Usar Token de Emergência (+1h) [{p0}/2]",
+  "@usarTokenDeEmergencia1hP0": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "avisoConsumirUmTokenDeEmergencia": "Aviso: Consumir um token de emergência bloqueia todas as atividades de lazer por 24h!",
+  "nenhumTokenDeEmergenciaRestantePara": "Nenhum Token de Emergência restante para este mês. Retorne aos seus estudos e foco!",
+  "idiomaPrincipalSteamApiDefinidoPara": "Idioma principal Steam API definido para English (US).",
+  "idiomaPrincipalSteamApiDefinidoPara2": "Idioma principal Steam API definido para Português (Brasil).",
+  "modoNukeAtivoRemocaoDaExtensao": "Modo Nuke ativo: remoção da extensão bloqueada até o tempo expirar.",
+  "remocaoCanceladaConcluaAVerificacaoAnti": "Remoção cancelada: conclua a verificação Anti-Burla para remover a extensão.",
+  "antiCheatAindaAtivoRemocaoBloqueada": "Anti-Burla ainda ativo. Remoção bloqueada.",
+  "removerExtensaoPoliticas": "Remover Extensão & Políticas?",
+  "verificacaoAntiCheatConcluidaIssoRemovera": "Verificação Anti-Burla concluída. Isso removerá a extensão Chronos, os links External Extensions e o Chronos Guard (políticas de Chrome/Chromium/Firefox) de todos os navegadores até você reinstalar.\n\nConfirmar remoção?",
+  "removerDeTodosOsNavegadores": "Remover de Todos os Navegadores",
+  "filtrosAntiDistracaoSalvosComSucesso": "Filtros anti-distração salvos com sucesso!",
+  "p0JaEstaNaLista": "\"{p0}\" já está na lista.",
+  "@p0JaEstaNaLista": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "antiCheatAtivoDesativeOAnti": "Anti-Burla ativo: desative o Anti-Burla para remover tags ou nomes de jogos.",
+  "antiCheatAtivoDesativeOAnti2": "Anti-Burla ativo: desative o Anti-Burla para remover a proteção de loja dos launchers.",
+  "configuracoesGerais": "Configurações Gerais",
+  "ajustesDeNotificacoesExtensoesLocaisModo": "Ajustes de notificações, extensões locais, modo e segurança",
+  "versaoEAtualizacoes": "Versão e Atualizações",
+  "chronosP0AsAtualizacoesSaoVerificadas": "Chronos {p0} — as atualizações são verificadas ao abrir o app.",
+  "@chronosP0AsAtualizacoesSaoVerificadas": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "chronosP0BuildDeDesenvolvimentoSem": "Chronos {p0} (build de desenvolvimento — sem atualização automática).",
+  "@chronosP0BuildDeDesenvolvimentoSem": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "procurarAtualizacoes": "Procurar atualizações",
+  "desinstalarChronos2": "Desinstalar Chronos",
+  "notificacoesDeDesktop": "Notificações de Desktop",
+  "oModoNaoPerturbeDoSistema": "O modo \"Não perturbe\" do sistema está ligado: as notificações do Chronos não vão aparecer até você desligá-lo.",
+  "verificar": "Verificar",
+  "notificarInicioDeAppMonitorado": "Notificar Início de App Monitorado",
+  "exibeUmaNotificacaoNoDesktopAvisando": "Exibe uma notificação no desktop avisando que o app em execução está sendo cronometrado.",
+  "notificacaoDeAppMonitoradoAtivada": "Notificação de app monitorado ativada",
+  "notificacaoDeAppMonitoradoDesativada": "Notificação de app monitorado desativada",
+  "alertasDeTempoDeTelaRestante": "Alertas de Tempo de Tela Restante",
+  "avisosAutomaticosQuandoRestarem15m5m": "Avisos automáticos quando restarem 15m, 5m e 1m antes do término do tempo de tela diário.",
+  "avisosPeriodicosDeUsoAtivo": "Avisos Periódicos de Uso Ativo",
+  "lembretesEmIntervalosRegularesExA": "Lembretes em intervalos regulares (ex: a cada 15 min) com o tempo já utilizado.",
+  "extensoesDosNavegadores": "Extensões dos Navegadores",
+  "protegeTodosOsNavegadoresDoDispositivo": "Protege todos os navegadores do dispositivo offline: extensão local nos Chromium (Chrome, Chromium, Brave, Edge, Vivaldi, Opera) e Proxy Seletivo Focus + CA Local no Firefox.",
+  "navegadoresDetectadosNoSistema": "Navegadores Detectados no Sistema:",
+  "extensaoRemovidaAposVerificacaoAntiCheat": "Extensão removida após verificação Anti-Burla. Clique abaixo para reinstalar em todos os navegadores.",
+  "configurandoNavegadoresGuard": "Configurando Navegadores & Guard...",
+  "protecaoPermanenteDoSistemaAntiBurla": "Proteção Permanente do Sistema (Anti-Burla de Navegadores)",
+  "protecaoDoSistemaAtivaTrancada": "Proteção do Sistema Ativa & Trancada",
+  "politicasForcadasAtivasEmChromeChromium": "Políticas forçadas ativas em Chrome/Chromium/Brave/Edge/Vivaldi/Opera (CRX3 assinado) e Firefox Release (Proxy Seletivo Focus + CA Local + PAC, sem avisos em about:policies). Remoção de extensão e navegação anônima estão bloqueadas.",
+  "reAplicarPoliticasDoSistema": "Re-aplicar Políticas do Sistema",
+  "politicasDoSistemaVerificadasERe": "Políticas do sistema verificadas e re-aplicadas!",
+  "falhaAoReAplicarPoliticas": "Falha ao re-aplicar políticas.",
+  "removendo": "Removendo...",
+  "removerExtensaoVerificarAntiCheat": "Remover Extensão (Verificar Anti-Burla)",
+  "oChronosGuardInstaladoPossuiPoliticas": "O Chronos Guard instalado possui políticas antigas (ex.: ExtensionSettings sem assinatura no Firefox Release). Clique em \"Instalar / Atualizar em Todos os Navegadores\" acima para corrigir em 1 clique.",
+  "oChronosGuardGravaPoliticasPermanentes": "O Chronos Guard grava políticas permanentes em /etc/ (com sua autorização Polkit) para impedir desinstalação manual e navegação anônima. Use o botão principal acima para ativar em 1 clique.",
+  "atualizarGuardViaPolkit1Clique": "Atualizar Guard via Polkit (1 Clique)",
+  "ativarGuardViaPolkit1Clique": "Ativar Guard via Polkit (1 Clique)",
+  "modoDoAplicativoCadastro": "Modo do Aplicativo & Cadastro",
+  "modoAtivoP0": "Modo Ativo: {p0}",
+  "@modoAtivoP0": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "configuradoComPinEProtecaoParental": "Configurado com PIN e proteção parental de restrições.",
+  "focadoEmAutonomiaComprometimentoPessoalE": "Focado em autonomia, comprometimento pessoal e produtividade.",
+  "trocarModoRefazerCadastro": "Trocar Modo / Refazer Cadastro",
+  "antiCheatProtecaoContraBurlar": "Anti-Burla & Proteção Contra Burlar",
+  "modoNukeAtivoP0SRestantes": "Modo Nuke Ativo ({p0}s restantes)",
+  "@modoNukeAtivoP0SRestantes": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "antiCheatAtivoDesafioStayfocusd": "Anti-Burla Ativo (Desafio StayFocusd)",
+  "antiCheatDesativado": "Anti-Burla Desativado",
+  "bloqueiaModificacoesDeRegrasAumentoDe": "Bloqueia modificações de regras, aumento de limites nos momentos de fraqueza e remoção de extensões.",
+  "gerenciarAntiCheat": "Gerenciar Anti-Burla",
+  "ativarAntiCheat": "Ativar Anti-Burla",
+  "textosDoDesafio": "Textos do desafio",
+  "antiBurlaAtivoOsTextosDo": "Anti-Burla ativo: os textos do desafio não podem ser alterados agora.",
+  "gerenciamentoDeDadosLocaisOffline": "Gerenciamento de Dados Locais (Offline)",
+  "todasAsInformacoesRegrasETempos": "Todas as informações, regras e tempos de tela do Chronos são armazenados 100% localmente no seu computador.",
+  "zerarConsumoDiarioDeHoje": "Zerar Consumo Diário de Hoje",
+  "reiniciarBancoDeDadosCompleto": "Reiniciar Banco de Dados Completo",
+  "reiniciarBancoDeDados2": "Reiniciar Banco de Dados",
+  "atencaoIssoIraApagarTodasAs": "Atenção: Isso irá apagar todas as regras de bloqueio criadas e redefinir o banco para o estado inicial. Deseja continuar?",
+  "zerarTudo": "Zerar Tudo",
+  "instalarProtecaoPermanente": "Instalar Proteção Permanente",
+  "estaEtapaConfiguraOsArquivosDe": "Esta etapa configura os arquivos de política oficiais em /etc/ e ativa o serviço do systemd para travar as extensões em definitivo contra burla.",
+  "comoDesejaProsseguir": "Como deseja prosseguir?",
+  "opcao1CliqueEmAbrirTerminal": "Opção 1: Clique em \"Abrir Terminal\" para abrir uma janela onde você digita sua senha do sudo UMA vez.\nOpção 2: Ou copie o comando abaixo e execute no seu terminal favorito:",
+  "copiarComando": "Copiar Comando",
+  "comandoCopiadoParaAAreaDe": "Comando copiado para a área de transferência!",
+  "verificarStatus": "Verificar Status",
+  "protecaoDoSistemaAtivaEConfirmada": "Proteção do sistema ativa e confirmada!",
+  "protecaoAindaPendenteDeInstalacao": "Proteção ainda pendente de instalação.",
+  "abrirTerminal": "Abrir Terminal",
+  "terminalAbertoDigiteSuaSenhaNa": "Terminal aberto! Digite sua senha na janela para concluir.",
+  "naoFoiPossivelAbrirOTerminal": "Não foi possível abrir o terminal automaticamente. Comando copiado!",
+  "ativarNoGoogleChrome": "Ativar no Google Chrome",
+  "oGoogleChromeOficialBloqueiaInjecoes": "O Google Chrome oficial bloqueia injeções ocultas por linha de comando por segurança. Para ativá-la, basta carregar a pasta local uma única vez (leva 10 segundos).",
+  "passoAPassoRapido": "Passo a passo rápido:",
+  "cliqueNoBotaoAbrirChromeAbaixo": "Clique no botão \"Abrir Chrome\" abaixo. O Chrome abrirá em chrome://extensions e o caminho da pasta será copiado.",
+  "noChromeAtiveAChaveModo": "No Chrome, ative a chave \"Modo do desenvolvedor\" no canto superior direito.",
+  "cliqueNoBotaoCarregarSemCompactacao": "Clique no botão \"Carregar sem compactação\" (canto superior esquerdo).",
+  "pressioneCtrlVOuSelecioneA": "Pressione Ctrl+V ou selecione a pasta da extensão e confirme.",
+  "copiarCaminho": "Copiar Caminho",
+  "caminhoCopiadoParaAAreaDe": "Caminho copiado para a área de transferência!",
+  "baixarZip": "Baixar .zip",
+  "arquivoSalvoEmP0": "Arquivo salvo em: {p0}",
+  "@arquivoSalvoEmP0": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "erroAoGerarZipParaDownloads": "Erro ao gerar zip para Downloads.",
+  "abrirChrome": "Abrir Chrome",
+  "chromeAbertoCaminhoCopiadoParaA": "Chrome aberto! Caminho copiado para a área de transferência.",
+  "ativarExtensaoNoFirefox": "Ativar Extensão no Firefox",
+  "noFirefoxReleasePadraoAMozilla": "No Firefox Release padrão, a Mozilla exige assinatura para .xpi externos — por isso a proteção permanente do Chronos funciona pelo Proxy Seletivo Local + Certificado CA via Chronos Guard. Para Firefox ESR/Dev/LibreWolf/Zen ou testes temporários em about:debugging, use o .xpi:",
+  "cliqueNoBotaoAbrirFirefoxAbaixo": "Clique no botão \"Abrir Firefox\" abaixo para ir direto à aba de depuração.",
+  "cliqueNoBotaoCarregarExtensaoTemporaria": "Clique no botão \"Carregar extensão temporária...\".",
+  "selecioneOArquivoManifestJsonNa": "Selecione o arquivo \"manifest.json\" na pasta abaixo ou o arquivo .xpi em ~/Downloads.",
+  "caminhoDoManifestJsonCopiado": "Caminho do manifest.json copiado!",
+  "erroAoGerarXpiParaDownloads": "Erro ao gerar xpi para Downloads.",
+  "abrirFirefox": "Abrir Firefox",
+  "firefoxAbertoCaminhoCopiadoParaA": "Firefox aberto! Caminho copiado para a área de transferência.",
+  "aparenciaModoDeTema": "Aparência & Modo de Tema",
+  "personalizeOTemaVisualDoChronos": "Personalize o tema visual do Chronos. O Modo Claro é otimizado para ambientes claros com alto contraste, e o Modo Escuro reduz o cansaço visual.",
+  "idiomaPrincipalTagsAutocompleteSteamApi": "Idioma",
+  "asTagsSaoEnviadasEmIngles": "Idioma do app, das extensões e das telas de bloqueio. As tags da Steam aparecem neste idioma quando disponíveis.",
+  "portuguesBr": "Português (BR)",
+  "englishUs": "English (US)",
+  "configBravesoftwareBraveBrowser": ".config/BraveSoftware/Brave-Browser",
+  "aoAtivarOAntiBurlaO": "Se você cadastrar seus textos, o Chronos sorteia só entre eles (os textos padrão deixam de ser usados). Sem textos seus, usa os padrão. Escreva um texto por bloco, separados por uma linha em branco (mínimo de 120 caracteres cada). Não dá para alterar com o Anti-Burla ativo.",
+  "seuTextoAqui": "Seu texto aqui…",
+  "salvar": "Salvar",
+  "atualizacoesDaExtensao": "Atualizações da extensão",
+  "atualizarExtensoesAutomaticamente": "Atualizar extensões automaticamente",
+  "quandoOChronosForAtualizadoOs": "Quando o Chronos for atualizado, os navegadores instalam a nova extensão sozinhos.",
+  "firefoxAtualizaAoReabrirONavegador": "Firefox: também atualiza pelo Chronos (versões assinadas).",
+  "atualizarExtensoesAgora": "Atualizar extensões agora",
+  "pedidoEnviadoOChromeInstalaA": "Pedido enviado. Os navegadores instalam a nova versão em alguns segundos.",
+  "mostrarApenasVideosDestesTipos": "Mostrar apenas vídeos destes tipos",
+  "escolhaAoMenosUmTipoAbaixo": "Escolha ao menos um tipo abaixo para ativar.",
+  "aHomeEOsRelacionadosSo": "A home e os relacionados só mostram os tipos escolhidos. A busca continua mostrando tudo (e desconta tempo).",
+  "escolhaAoMenosUmTipoAntes": "Escolha ao menos um tipo antes de ativar.",
+  "importarDaListaBranca": "Importar da Lista Branca",
+  "nenhumTipoDoYoutubeNaLista": "Nenhum tipo do YouTube na Lista Branca.",
+  "tiposPorCanalPalavra": "Tipos por canal/palavra",
+  "filtrosDeConteudoAntiDistracaoPor": "Filtros de Conteúdo & Anti-Distração por Plataforma (Estilo StayFocusd)",
+  "configureFiltrosDeCssEHtml": "Configure filtros de CSS e HTML específicos para cada aplicativo ou rede social. Elimine gatilhos de dopamina sem precisar bloquear os sites por completo.",
+  "detoxGlobalTodosOsSites": "Detox Global (Todos os Sites)",
+  "modoPretoEBrancoGrayscaleDetox": "Modo Preto e Branco (Grayscale Detox)",
+  "aplicaEscalaDeCinzaEmTodas": "Aplica escala de cinza em todas as páginas para desestimular consumo compulsivo visual.",
+  "bloquearNotificacoesEBadges": "Bloquear Notificações e Badges",
+  "removeSinosVermelhosEAlertasNumericos": "Remove sinos vermelhos e alertas numéricos em todos os sites para evitar interrupções.",
+  "youtubeFocus": "YouTube Focus",
+  "bloquearYoutubeShorts": "Bloquear YouTube Shorts",
+  "ocultaCarrosseisDeShortsNaHome": "Oculta carrosséis de Shorts na home, na busca e na barra lateral.",
+  "ocultarFeedDaHome": "Ocultar Feed da Home",
+  "ocultaTodasAsRecomendacoesAlgoritmicasDa": "Oculta todas as recomendações algorítmicas da página inicial do YouTube.",
+  "ocultarVideosRelacionadosBarraLateral": "Ocultar Vídeos Relacionados (Barra Lateral)",
+  "removeSugestoesDeVideosAoLado": "Remove sugestões de vídeos ao lado do reprodutor para evitar distrações.",
+  "ocultarComentariosDoYoutube": "Ocultar Comentários do YouTube",
+  "ocultaTodaASecaoDeComentarios": "Oculta toda a seção de comentários em qualquer vídeo.",
+  "instagramFocus": "Instagram Focus",
+  "bloquearInstagramReels": "Bloquear Instagram Reels",
+  "removeAAbaEOCarrossel": "Remove a aba e o carrossel de vídeos curtos Reels no Instagram Web.",
+  "ocultarFeedPrincipalExplore": "Ocultar Feed Principal & Explore",
+  "ocultaOFeedInfinitoDePostagens": "Oculta o feed infinito de postagens e sugestões da página inicial.",
+  "ocultarComentariosDoInstagram": "Ocultar Comentários do Instagram",
+  "ocultaComentariosSobPostagensEVideos": "Oculta comentários sob postagens e vídeos.",
+  "tiktokFocus": "TikTok Focus",
+  "bloquearFeedDeVideosRecomendados": "Bloquear Feed de Vídeos Recomendados",
+  "bloqueiaOFluxoInfinitoDeVideos": "Bloqueia o fluxo infinito de vídeos curtos \"Para Você\" no TikTok.",
+  "redditFocus": "Reddit Focus",
+  "bloquearFeedPrincipalPopular": "Bloquear Feed Principal / Popular",
+  "ocultaATimelineDePostsInfinitos": "Oculta a timeline de posts infinitos no r/all e na página inicial do Reddit.",
+  "ocultarSecoesDeComentarios": "Ocultar Seções de Comentários",
+  "ocultaAsArvoresDeDiscussaoE": "Oculta as árvores de discussão e comentários em posts do Reddit.",
+  "bloquearConteudo18Nsfw": "Bloquear Conteúdo +18 (NSFW)",
+  "escondePostsNsfwNosFeedsE": "Esconde posts NSFW nos feeds e na busca e bloqueia subreddits e posts +18. Com o Anti-Burla ativo não pode ser desligado.",
+  "xTwitterFocus": "X / Twitter Focus",
+  "bloquearTimelineFeedPrincipal": "Bloquear Timeline / Feed Principal",
+  "ocultaATimelineParaVoceE": "Oculta a timeline \"Para Você\" e \"Seguindo\" no X (Twitter).",
+  "ocultarAssuntosDoMomentoTrending": "Ocultar Assuntos do Momento (Trending)",
+  "removeABarraLateralDeTendencias": "Remove a barra lateral de tendências e notícias exploratórias.",
+  "bloquearConteudo18Sensivel": "Bloquear Conteúdo +18 (Sensível)",
+  "escondePostsComMidiaSensivelE": "Esconde posts com mídia sensível e bloqueia perfis marcados como sensíveis. Com o Anti-Burla ativo não pode ser desligado.",
+  "linkedinFocus": "LinkedIn Focus",
+  "bloquearFeedDeNoticiasDoLinkedin": "Bloquear Feed de Notícias do LinkedIn",
+  "ocultaATimelineDePostagensPara": "Oculta a timeline de postagens para focar apenas em mensagens e perfis diretos.",
+  "hudFlutuanteNosNavegadoresPilula": "HUD Flutuante nos Navegadores (Pílula)",
+  "opacidadeDaPilulaAlfa": "Opacidade da Pílula (Alfa)",
+  "controlaATransparenciaDaPilulaRecolhida": "Controla a transparência da pílula recolhida e do olho fechado nos navegadores.",
+  "tamanhoDaPilula": "Tamanho da Pílula",
+  "ajustaAEscalaDaPilulaE": "Ajusta a escala da pílula e o diâmetro do olho fechado (sempre igual à altura da pílula).",
+  "aoEsconderPilulaMostrarIconeDe": "Ao esconder pílula, mostrar ícone de Olho arrastável",
+  "quandoAtivoMinimizarTransformaAPilula": "Quando ativo, minimizar transforma a pílula em um botão circular com olho fechado arrastável do mesmo tamanho (altura) da pílula; desligado, oculta totalmente (Alt+Shift+C reexibe).",
+  "launchersJogosSteamApiHeroicEpic": "Launchers & Jogos (Steam API, Heroic, Epic, GOG, Lutris)",
+  "antiCheatAtivoRemocaoBloqueada": "Anti-Burla Ativo (Remoção Bloqueada)",
+  "ativarFiltroEmLaunchersLojasDe": "Ativar Filtro em Launchers & Lojas de Jogos",
+  "bloqueiaJogosEmExecucaoPaginasDe": "Bloqueia jogos em execução, páginas de loja, guias, discussões e artworks por nome ou tag via Steam API. Adicionar é sempre livre; remover exige Anti-Burla desativado.",
+  "antiCheatAtivoDesativeOAnti3": "Anti-Burla ativo: desative o Anti-Burla para desligar o filtro de launchers.",
+  "tagsProibidasSteamApi": "Tags Proibidas (Steam API)",
+  "buscarTagNaSteamApiEx": "Buscar tag na Steam API (ex: Ação, Souls-like, Terror, FPS)...",
+  "nomesDeJogosProibidos": "Nomes de Jogos Proibidos",
+  "buscarJogoNaSteamApiEx": "Buscar jogo na Steam API (ex: Counter-Strike 2, Elden Ring)...",
+  "protegerLojaComunidadeDentroDaSteam": "Proteger Loja/Comunidade dentro da Steam/Heroic (Proxy + NSS)",
+  "ocultarJogosDetectadosP0": "Ocultar Jogos Detectados ({p0})",
+  "@ocultarJogosDetectadosP0": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "consultarJogosDosLaunchersSteamApi": "Consultar Jogos dos Launchers (Steam API)",
+  "nenhumJogoInstaladoDetectadoNosLaunchers": "Nenhum jogo instalado detectado nos launchers locais (Steam, Heroic, Lutris, Bottles).",
+  "bloquearJogo": "+ Bloquear Jogo",
+  "tagCanonicaSteamApiP0": "Tag canônica Steam API: {p0}",
+  "@tagCanonicaSteamApiP0": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "sugestoesSteamApi": "Sugestões Steam API:",
+  "enviaP0ParaASteamApi": "Envia \"{p0}\" para a Steam API",
+  "@enviaP0ParaASteamApi": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "desativarTodos": "Desativar todos",
+  "ativarTodos": "Ativar todos",
+  "nomeDoFeriado": "Nome do feriado",
+  "exFeriasAniversario": "Ex.: Férias, Aniversário",
+  "feriados": "Feriados",
+  "hojeEFeriadoP0AsCotas": "Hoje é feriado: {p0} — as cotas de feriado das sessões estão valendo.",
+  "@hojeEFeriadoP0AsCotas": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "aCotaDeFeriadoEDefinida": "A cota de feriado é definida em cada sessão (como a de fim de semana).",
+  "proximosFeriados": "Próximos feriados",
+  "feriadosPersonalizados": "Feriados personalizados",
+  "comOAntiBurlaLigadoNao": "Com o Anti-Burla ligado não é possível adicionar feriados (só remover).",
+  "adicionarUmaDataComACota": "Adicionar uma data com a cota de feriado das sessões",
+  "adicionarData": "Adicionar data",
+  "antiBurlaLigadoAdicionarFeriadosEsta": "Anti-Burla ligado: adicionar feriados está bloqueado.",
+  "nenhum": "Nenhum.",
+  "remover": "Remover",
+  "varreduraConcluidaP0ProcessosAuditadosQuarentena": "Varredura concluída. {p0} processos auditados/quarentenados.",
+  "@varreduraConcluidaP0ProcessosAuditadosQuarentena": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "inspecaoDeBinariosQuarentena": "Inspeção de Binários & Quarentena",
+  "protecaoContraBinariosNaoEmpacotadosPelo": "Proteção contra binários não empacotados pelo pacman ou executados fora de /usr/bin",
+  "escanearProcessos": "Escanear Processos",
+  "nenhumProcessoNaoConfiavelEmQuarentena": "Nenhum processo não confiável em quarentena!",
+  "cliqueEmEscanearProcessosParaAuditar": "Clique em \"Escanear Processos\" para auditar binários ativos fora do sistema oficial.",
+  "aprovarBinario": "Aprovar Binário",
+  "rejeitarBloquear": "Rejeitar & Bloquear",
+  "modoAntiCheatAtivo": "Modo Anti-Burla Ativo!",
+  "oChronosEstaNoModoNuke": "O Chronos está no Modo Nuke (restam {p0}m). Não é permitido {p1} até que o cronômetro expire.",
+  "@oChronosEstaNoModoNuke": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      },
+      "p1": {
+        "type": "Object"
+      }
+    }
+  },
+  "naoEPermitidoP0EnquantoO": "Não é permitido {p0} enquanto o Anti-Burla estiver ativo. Para alterar regras, você deve primeiro resolver o desafio de digitação estrito do Anti-Burla.",
+  "@naoEPermitidoP0EnquantoO": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "entendido": "Entendido",
+  "resolverDesafio": "Resolver Desafio",
+  "desbloquearEntidades": "desbloquear entidades",
+  "removerRegrasDeBloqueio": "remover regras de bloqueio",
+  "editarTempoDeBloqueioEAgendamento": "editar tempo de bloqueio e agendamento",
+  "finsDeSemanaP0": "Fins de semana: {p0}",
+  "@finsDeSemanaP0": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "tempoDeTelaP0P1P2": "Tempo de tela: {p0}{p1} • {p2}",
+  "@tempoDeTelaP0P1P2": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      },
+      "p1": {
+        "type": "Object"
+      },
+      "p2": {
+        "type": "Object"
+      }
+    }
+  },
+  "renomear": "Renomear",
+  "nome": "Nome",
+  "adicionarAppsOuSitesAoGrupo": "adicionar apps ou sites ao grupo (só renomear é permitido)",
+  "editarGruposDeListaBranca": "editar grupos de lista branca",
+  "adicionarGruposDeListaBranca": "adicionar grupos de lista branca",
+  "removerGrupoDeListaBranca": "Remover Grupo de Lista Branca",
+  "desejaRealmenteRemoverEsteGrupoDe": "Deseja realmente remover este grupo de lista branca? Os aplicativos e sites configurados nele deixarão de ser protegidos e voltarão a ser contabilizados ou bloqueados.",
+  "removerAplicativoDoGrupoDeBloqueio": "remover aplicativo do grupo de bloqueio",
+  "removerDoGrupoDeBloqueio": "Remover do Grupo de Bloqueio",
+  "desejaRealmenteRemoverP0DesteGrupo": "Deseja realmente remover \"{p0}\" deste grupo de bloqueio?",
+  "@desejaRealmenteRemoverP0DesteGrupo": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "erroAoRemoverAplicativoP0": "Erro ao remover aplicativo: {p0}",
+  "@erroAoRemoverAplicativoP0": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "removerDaListaBranca": "Remover da Lista Branca",
+  "desejaRemoverP0DestaListaBranca": "Deseja remover \"{p0}\" desta lista branca? O app deixará de ser protegido contra bloqueios.",
+  "@desejaRemoverP0DestaListaBranca": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "erroAoRemoverDaListaBranca": "Erro ao remover da lista branca: {p0}",
+  "@erroAoRemoverDaListaBranca": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "t0mBloqueioTotal": "0m (Bloqueio Total)",
+  "p0AplicativoS": "{p0} aplicativo(s)",
+  "@p0AplicativoS": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "p0SiteSPalavraS": "{p0} site(s)/palavra(s)",
+  "@p0SiteSPalavraS": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "permitirSomente": "Permitir somente",
+  "bloquear": "Bloquear",
+  "janelaP0P1P2": "Janela: {p0} {p1}-{p2}",
+  "@janelaP0P1P2": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      },
+      "p1": {
+        "type": "Object"
+      },
+      "p2": {
+        "type": "Object"
+      }
+    }
+  },
+  "extensaoProtecaoDosNavegadores": "Extensão & Proteção dos Navegadores",
+  "oChronosAplicaAExtensaoEm": "O Chronos aplica a extensão em navegadores Chromium e o Proxy Seletivo + CA no Firefox de forma totalmente offline.",
+  "navegadoresInstaladosDetectadosP0": "Navegadores instalados detectados ({p0}):",
+  "@navegadoresInstaladosDetectadosP0": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "servidorLocalAtivoNaPortaP0": "Servidor local ativo na porta {p0}",
+  "@servidorLocalAtivoNaPortaP0": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "chromeAbertoEmChromeExtensionsCole": "Chrome aberto em chrome://extensions! Cole o caminho copiado ao carregar sem compactação.",
+  "firefoxAbertoEmAboutPoliciesPara": "Firefox aberto em about:policies para inspeção das políticas locais.",
+  "terminalAbertoParaAutorizacaoDoChronos": "Terminal aberto para autorização do Chronos Guard!",
+  "comandoCopiadoExecuteNoTerminalPara": "Comando copiado! Execute no terminal para instalar o Guard.",
+  "configurando": "Configurando...",
+  "comandoGuardCopiadoParaOTerminal": "Comando Guard copiado para o terminal!",
+  "sessoesBloqueiosP0": "Sessões & Bloqueios ({p0})",
+  "@sessoesBloqueiosP0": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "listaBrancaWhitelistP0": "Lista Branca / Whitelist ({p0})",
+  "@listaBrancaWhitelistP0": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "conflitosEncontradosP0": "Conflitos encontrados ({p0})",
+  "@conflitosEncontradosP0": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "eMaisP0": "… e mais {p0}.",
+  "@eMaisP0": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "extensaoWeb": "Extensão Web",
+  "novaSessaoDeBloqueio": "Nova Sessão de Bloqueio",
+  "sessoesConfiguradasP0": "Sessões Configuradas ({p0})",
+  "@sessoesConfiguradasP0": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "nenhumaSessaoCriadaAindaCliqueEm": "Nenhuma sessão criada ainda.\nClique em \"Nova Sessão de Bloqueio\" para agrupar apps ou sites.",
+  "catracaTravadaAumentosProibidos": "Catraca Travada (Aumentos proibidos)",
+  "recolher": "Recolher",
+  "expandir": "Expandir",
+  "editarTempoDeBloqueio": "Editar Tempo de Bloqueio",
+  "adicionarAppsSitesAoGrupo": "Adicionar Apps / Sites ao Grupo",
+  "focarNoDashboard": "Focar no Dashboard",
+  "desbloquear": "Desbloquear",
+  "bloquearCompletamente": "Bloquear Completamente",
+  "removerSessao": "Remover Sessão",
+  "recolherItensDaSessao": "Recolher itens da sessão",
+  "expandirParaVerTodosOsApps": "Expandir para ver todos os apps e sites",
+  "adicionarAplicativosSitesPermitidoNoAnti": "Adicionar Aplicativos / Sites (Permitido no Anti-Burla)",
+  "sessaoSelecionada": "Sessão selecionada",
+  "aplicativosBloqueadosP0": "Aplicativos Bloqueados ({p0}):",
+  "@aplicativosBloqueadosP0": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "removerP0DoGrupoAntiCheat": "Remover {p0} do grupo (Anti-Burla restrito)",
+  "@removerP0DoGrupoAntiCheat": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "sitesEPalavrasChaveBloqueadosP0": "Sites e Palavras-Chave Bloqueados ({p0}):",
+  "@sitesEPalavrasChaveBloqueadosP0": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "nenhumAplicativoOuSiteListadoNesta": "Nenhum aplicativo ou site listado nesta sessão.",
+  "gruposDeListaBrancaP0": "Grupos de Lista Branca ({p0})",
+  "@gruposDeListaBrancaP0": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "nenhumGrupoDeListaBrancaCriado": "Nenhum grupo de lista branca criado.\nApps e sites em listas brancas são protegidos contra bloqueios e finalizações.",
+  "protecaoTotal": "PROTEÇÃO TOTAL",
+  "p0TiposYoutube": "{p0} tipos YouTube",
+  "@p0TiposYoutube": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "itensProtegidosContraContagemDeTempo": "Itens protegidos contra contagem de tempo de tela e fechamento automático",
+  "youtubePermitidoP0": "YouTube permitido: {p0}",
+  "@youtubePermitidoP0": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "recolherItens": "Recolher itens",
+  "expandirItens": "Expandir itens",
+  "editarGrupo": "Editar Grupo",
+  "removerGrupo": "Remover Grupo",
+  "aplicativosProtegidosP0": "Aplicativos Protegidos ({p0}):",
+  "@aplicativosProtegidosP0": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "removerP0DaListaBranca": "Remover {p0} da lista branca",
+  "@removerP0DaListaBranca": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "sitesEPalavrasProtegidosP0": "Sites e Palavras Protegidos ({p0}):",
+  "@sitesEPalavrasProtegidosP0": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "tiposDoYoutubePermitidosP0": "Tipos do YouTube permitidos ({p0}):",
+  "@tiposDoYoutubePermitidosP0": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "registroDeBurlas": "Registro de burlas",
+  "cofreDoChronosAtivoComO": "Cofre do Chronos ativo: com o Anti-Burla ligado, editar o banco, parar o serviço, apagar o autostart ou mudar o relógio é desfeito em segundos e anotado aqui.",
+  "cofreDoChronosNaoInstaladoInstale": "Cofre do Chronos não instalado: instale/atualize a proteção dos navegadores (Chronos Guard) para ativar as camadas do Anti-Burla.",
+  "relogioDoSistemaCorrigidoEmP0": "Relógio do sistema corrigido em {p0} min (o Chronos usa a hora confiável).",
+  "@relogioDoSistemaCorrigidoEmP0": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "penalidadeAtivaTodasAsSessoesBloqueadas": "Penalidade ativa: todas as sessões bloqueadas até {p0}.",
+  "@penalidadeAtivaTodasAsSessoesBloqueadas": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "aoDetectarUmaBurla": "Ao detectar uma burla",
+  "restaurarERegistrar": "Restaurar e registrar",
+  "restaurarRegistrarEBloquearTudoAte": "Restaurar, registrar e bloquear tudo até a meia-noite",
+  "comOAntiBurlaAtivoNao": "Com o Anti-Burla ativo não dá para voltar para a opção mais leve.",
+  "nenhumaTentativaDeBurlaRegistrada": "Nenhuma tentativa de burla registrada.",
+  "bancoEditado": "Banco editado",
+  "bancoApagado": "Banco apagado",
+  "servicoParado": "Serviço parado",
+  "servicoApagado": "Serviço apagado",
+  "autostartApagado": "Autostart apagado",
+  "relogioAlterado": "Relógio alterado",
+  "desbloqueioRecusado": "Desbloqueio recusado",
+  "historicoDeBurlas": "Histórico de burlas",
+  "p0EventoS": "{p0} evento(s)",
+  "@p0EventoS": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "nenhumaBurlaNestePeriodo": "Nenhuma burla neste período.",
+  "naoEPossivelDesinstalar": "Não é possível desinstalar",
+  "oAntiBurlaEstaAtivoEnquanto": "O Anti-Burla está ativo. Enquanto ele estiver ligado, o Chronos não pode ser fechado nem desinstalado.",
+  "desinstalarOChronos": "Desinstalar o Chronos?",
+  "istoRemoveOChronosDoComputador": "Isto remove o Chronos do computador: o app em segundo plano, a extensão dos navegadores, a proteção do sistema (pode pedir sua senha), o início automático e o serviço do Chronos.",
+  "apagarTambemMeusDados": "Apagar também meus dados",
+  "regrasHistoricoDeUsoEConfiguracoes": "Regras, histórico de uso e configurações. Sem isso, ficam salvos para uma reinstalação.",
+  "desinstalar": "Desinstalar",
+  "atualizacaoAutomaticaSoFuncionaNaVersao": "Atualização automática só funciona na versão instalada (não em builds de desenvolvimento).",
+  "oChronosJaEstaNaVersao": "O Chronos já está na versão mais recente ({p0}).",
+  "@oChronosJaEstaNaVersao": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "baixando": "Baixando…",
+  "verificandoAssinatura": "Verificando assinatura…",
+  "instalando": "Instalando…",
+  "atualizandoAProtecaoDoSistemaPode": "Atualizando a proteção do sistema (pode pedir sua senha)…",
+  "reiniciandoOChronos": "Reiniciando o Chronos…",
+  "aProtecaoDoSistemaGuardNao": "A proteção do sistema (Guard) não foi atualizada agora. Você pode atualizá-la depois em Configurações.",
+  "novaVersaoDoChronosP0": "Nova versão do Chronos: {p0}",
+  "@novaVersaoDoChronosP0": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "voceEstaNaVersaoP0Deseja": "Você está na versão {p0}. Deseja atualizar agora?",
+  "@voceEstaNaVersaoP0Deseja": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "falhaNaAtualizacaoP0": "Falha na atualização: {p0}",
+  "@falhaNaAtualizacaoP0": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "depois": "Depois",
+  "tentarNovamente": "Tentar novamente",
+  "atualizarAgora": "Atualizar agora",
+  "deUmNomeAoTipoNovo": "Dê um nome ao tipo novo.",
+  "tiposDoYoutubePorCanalOu": "Tipos do YouTube por canal ou palavra",
+  "exCanalFlowPodcastContaComo": "Ex.: canal \"Flow Podcast\" conta como Podcasts; palavra \"minecraft\" cria o tipo \"Minecraft\". Separe vários canais ou palavras por vírgula.",
+  "tipo": "Tipo",
+  "novoTipo": "Novo tipo…",
+  "nomeDoTipo": "Nome do tipo",
+  "canais": "Canais",
+  "palavrasNoTituloTags": "Palavras no título/tags",
+  "adicionarRegra": "Adicionar regra",
+  "hojeP0": " Hoje: {p0}.",
+  "@hojeP0": {
+    "placeholders": {
+      "p0": {
+        "type": "Object"
+      }
+    }
+  },
+  "escolhaDosPaisSuffix": " (escolha dos pais)",
+  "guiaAnonimaSeraBloqueadaSuffix": " — a guia anônima será bloqueada de novo",
+  "safesearchNosNavegadoresSuffix": " + SafeSearch nos navegadores",
+  "todosOsNavegadoresJaPermitemAnonimo": "Todos os navegadores já permitem a extensão no anônimo.",
+  "iaDeImagensNaTelaInteira": "IA de imagens na tela inteira (local)",
+  "iaTelaInteiraDescricao": "Analisa a janela em foco a cada ~2 s em qualquer app (não só navegador) e cobre a tela se aparecer conteúdo +18. Tudo no computador, nada é gravado. Usa um pouco de CPU.",
+  "iaTelaInteiraNaoSuportada": "Disponível só no Hyprland com o grim instalado.",
+  "conteudoAdultoDetectadoNaTela": "Conteúdo +18 detectado",
+  "coberturaTelaTexto": "O Chronos encontrou conteúdo adulto na janela \"{window}\". Feche ou troque o conteúdo antes de voltar.",
+  "@coberturaTelaTexto": {
+    "placeholders": {
+      "window": {
+        "type": "String"
+      }
+    }
+  },
+  "entendiVoltar": "Entendi, voltar",
+  "appBloqueadoTitulo": "{app} está bloqueado",
+  "@appBloqueadoTitulo": {
+    "placeholders": {
+      "app": {
+        "type": "String"
+      }
+    }
+  },
+  "motivoQuota": "O limite de tempo de hoje acabou.",
+  "motivoJanela": "Este horário está bloqueado.",
+  "motivoForcado": "Este app está bloqueado por completo.",
+  "motivoPenalidade": "Penalidade ativa por tentativa de burla.",
+  "motivoLazer": "Pausa obrigatória de lazer em andamento.",
+  "appFechadoPeloChronos": "O Chronos fechou o app.",
+  "extVersaoAtualizada": "(atualizada)",
+  "@extVersaoAtualizada": {},
+  "extVersaoPendente": "→ {version} pendente",
+  "@extVersaoPendente": {
+    "placeholders": {
+      "version": {
+        "type": "String"
+      }
+    }
+  },
+  "extFirefoxPrecisaAssinar": "→ {version} aguardando assinatura da Mozilla (rode scripts/run-release.sh)",
+  "@extFirefoxPrecisaAssinar": {
+    "placeholders": {
+      "version": {
+        "type": "String"
+      }
+    }
+  },
+  "extVersaoDisponivel": "Versão disponível: {version}",
+  "@extVersaoDisponivel": {
+    "placeholders": {
+      "version": {
+        "type": "String"
+      }
+    }
+  },
+  "contaDaCriancaProtegida": "Conta da criança protegida",
+  "contaProtegidaDescricao": "A conta \"{user}\" não é administradora: não consegue remover o Chronos. Wi-Fi, pendrive, impressora, Bluetooth, desligar e instalar programas dos repositórios oficiais continuam liberados.",
+  "@contaProtegidaDescricao": {
+    "placeholders": {
+      "user": {
+        "type": "String"
+      }
+    }
+  },
+  "contaEhAdministradoraAviso": "A conta \"{user}\" é administradora (sudo) e pode remover o Chronos como root. Proteja a conta: ela deixa de ser administradora e o Chronos libera só as ações do dia a dia. Pede a senha de outra conta administradora (a do responsável).",
+  "@contaEhAdministradoraAviso": {
+    "placeholders": {
+      "user": {
+        "type": "String"
+      }
+    }
+  },
+  "contaSemAdministrador": "A conta \"{user}\" já não é administradora: não consegue remover o Chronos.",
+  "@contaSemAdministrador": {
+    "placeholders": {
+      "user": {
+        "type": "String"
+      }
+    }
+  },
+  "protegerEstaConta": "Proteger esta conta",
+  "devolverAdministrador": "Devolver acesso de administrador",
+  "feitoValeNoProximoLogin": "Feito. Vale a partir do próximo login.",
+  "guardNaoInstaladoAtiveAProtecao": "Chronos Guard não instalado: ative a proteção dos navegadores antes.",
+  "autorizacaoCancelada": "Autorização cancelada.",
+  "textosDesafioExplicacao": "Seus textos substituem os textos padrão: o desafio sorteia só entre eles. Sem textos seus, usa os padrão. Mínimo de 120 caracteres cada. Não dá para alterar com o Anti-Burla ativo.",
+  "recusarTextosFaceis": "Recusar textos fáceis demais",
+  "recusarTextosFaceisDescricao": "Bloqueia textos com palavras repetidas, poucas letras diferentes, sequências de teclado ou trechos copiados várias vezes.",
+  "semTextosUsaOsPadrao": "Nenhum texto seu: o desafio usa os textos padrão.",
+  "adicionarTexto": "Adicionar texto",
+  "editarTexto": "Editar texto",
+  "p0Caracteres": "{count} caracteres",
+  "@p0Caracteres": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "textoAprovado": "Texto aprovado.",
+  "ok": "OK"
+}

@@ -10,6 +10,8 @@
 struct _MyApplication {
   GtkApplication parent_instance;
   char** dart_entrypoint_arguments;
+  // Single instance: later activations (menu/autostart) re-present this window.
+  GtkWindow* main_window;
 };
 
 G_DEFINE_TYPE(MyApplication, my_application, GTK_TYPE_APPLICATION)
@@ -22,8 +24,16 @@ static void first_frame_cb(MyApplication* self, FlView* view) {
 // Implements GApplication::activate.
 static void my_application_activate(GApplication* application) {
   MyApplication* self = MY_APPLICATION(application);
+  if (self->main_window != nullptr) {
+    // Chronos keeps running in the background when its window is closed; opening it
+    // again from the app menu or tray just brings the existing window back.
+    gtk_widget_show(GTK_WIDGET(self->main_window));
+    gtk_window_present(self->main_window);
+    return;
+  }
   GtkWindow* window =
       GTK_WINDOW(gtk_application_window_new(GTK_APPLICATION(application)));
+  self->main_window = window;
 
   // Use a header bar only when running in GNOME desktop.
   // In tiling window managers (Hyprland, Sway, Omarchy) and non-GNOME environments,
@@ -145,5 +155,5 @@ MyApplication* my_application_new() {
 
   return MY_APPLICATION(g_object_new(my_application_get_type(),
                                      "application-id", APPLICATION_ID, "flags",
-                                     G_APPLICATION_NON_UNIQUE, nullptr));
+                                     G_APPLICATION_DEFAULT_FLAGS, nullptr));
 }

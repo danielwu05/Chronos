@@ -6,8 +6,12 @@
 // Static analysis wrongly picks the IO variant, thus ignore this
 // ignore_for_file: argument_type_not_assignable
 
+import 'api/adult.dart';
+import 'api/holidays.dart';
 import 'api/simple.dart';
+import 'api/tamper.dart';
 import 'api/updater.dart';
+import 'api/youtube.dart';
 
 import 'dart:async';
 import 'dart:convert';
@@ -39,6 +43,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   ActionFeedback dco_decode_action_feedback(dynamic raw);
 
   @protected
+  AdultAttemptDto dco_decode_adult_attempt_dto(dynamic raw);
+
+  @protected
+  AdultFilterDto dco_decode_adult_filter_dto(dynamic raw);
+
+  @protected
   AnalyticsSummaryDto dco_decode_analytics_summary_dto(dynamic raw);
 
   @protected
@@ -46,6 +56,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   bool dco_decode_bool(dynamic raw);
+
+  @protected
+  AdultFilterDto dco_decode_box_autoadd_adult_filter_dto(dynamic raw);
 
   @protected
   FocusFiltersDto dco_decode_box_autoadd_focus_filters_dto(dynamic raw);
@@ -57,13 +70,25 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   LauncherGameDto dco_decode_box_autoadd_launcher_game_dto(dynamic raw);
 
   @protected
+  ConflictDto dco_decode_conflict_dto(dynamic raw);
+
+  @protected
   DailyUsageDto dco_decode_daily_usage_dto(dynamic raw);
 
   @protected
   DatabaseStatsDto dco_decode_database_stats_dto(dynamic raw);
 
   @protected
+  DnsProviderDto dco_decode_dns_provider_dto(dynamic raw);
+
+  @protected
   EngineStatus dco_decode_engine_status(dynamic raw);
+
+  @protected
+  ExtensionReportDto dco_decode_extension_report_dto(dynamic raw);
+
+  @protected
+  ExtensionUpdateStatusDto dco_decode_extension_update_status_dto(dynamic raw);
 
   @protected
   double dco_decode_f_64(dynamic raw);
@@ -72,10 +97,19 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   FocusFiltersDto dco_decode_focus_filters_dto(dynamic raw);
 
   @protected
+  HolidayDto dco_decode_holiday_dto(dynamic raw);
+
+  @protected
+  HolidayQuotaDto dco_decode_holiday_quota_dto(dynamic raw);
+
+  @protected
   int dco_decode_i_32(dynamic raw);
 
   @protected
   PlatformInt64 dco_decode_i_64(dynamic raw);
+
+  @protected
+  IncognitoAccessDto dco_decode_incognito_access_dto(dynamic raw);
 
   @protected
   InstalledAppDto dco_decode_installed_app_dto(dynamic raw);
@@ -87,7 +121,25 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<String> dco_decode_list_String(dynamic raw);
 
   @protected
+  List<AdultAttemptDto> dco_decode_list_adult_attempt_dto(dynamic raw);
+
+  @protected
+  List<ConflictDto> dco_decode_list_conflict_dto(dynamic raw);
+
+  @protected
   List<DailyUsageDto> dco_decode_list_daily_usage_dto(dynamic raw);
+
+  @protected
+  List<DnsProviderDto> dco_decode_list_dns_provider_dto(dynamic raw);
+
+  @protected
+  List<ExtensionReportDto> dco_decode_list_extension_report_dto(dynamic raw);
+
+  @protected
+  List<HolidayDto> dco_decode_list_holiday_dto(dynamic raw);
+
+  @protected
+  List<HolidayQuotaDto> dco_decode_list_holiday_quota_dto(dynamic raw);
 
   @protected
   List<InstalledAppDto> dco_decode_list_installed_app_dto(dynamic raw);
@@ -127,10 +179,22 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<TagDisplayEntryDto> dco_decode_list_tag_display_entry_dto(dynamic raw);
 
   @protected
+  List<TamperEventDto> dco_decode_list_tamper_event_dto(dynamic raw);
+
+  @protected
   List<TopEntityDto> dco_decode_list_top_entity_dto(dynamic raw);
 
   @protected
   List<WhitelistGroupDto> dco_decode_list_whitelist_group_dto(dynamic raw);
+
+  @protected
+  List<YtContentTypeDto> dco_decode_list_yt_content_type_dto(dynamic raw);
+
+  @protected
+  List<YtCustomRuleDto> dco_decode_list_yt_custom_rule_dto(dynamic raw);
+
+  @protected
+  List<YtExemptTotalDto> dco_decode_list_yt_exempt_total_dto(dynamic raw);
 
   @protected
   LiveEngineTick dco_decode_live_engine_tick(dynamic raw);
@@ -160,6 +224,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   RuleItemDto dco_decode_rule_item_dto(dynamic raw);
 
   @protected
+  ScreenAlertDto dco_decode_screen_alert_dto(dynamic raw);
+
+  @protected
   SiteStatusDto dco_decode_site_status_dto(dynamic raw);
 
   @protected
@@ -172,7 +239,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   TagDisplayEntryDto dco_decode_tag_display_entry_dto(dynamic raw);
 
   @protected
+  TamperEventDto dco_decode_tamper_event_dto(dynamic raw);
+
+  @protected
   TopEntityDto dco_decode_top_entity_dto(dynamic raw);
+
+  @protected
+  int dco_decode_u_32(dynamic raw);
 
   @protected
   int dco_decode_u_8(dynamic raw);
@@ -181,7 +254,19 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void dco_decode_unit(dynamic raw);
 
   @protected
+  VaultStatusDto dco_decode_vault_status_dto(dynamic raw);
+
+  @protected
   WhitelistGroupDto dco_decode_whitelist_group_dto(dynamic raw);
+
+  @protected
+  YtContentTypeDto dco_decode_yt_content_type_dto(dynamic raw);
+
+  @protected
+  YtCustomRuleDto dco_decode_yt_custom_rule_dto(dynamic raw);
+
+  @protected
+  YtExemptTotalDto dco_decode_yt_exempt_total_dto(dynamic raw);
 
   @protected
   AnyhowException sse_decode_AnyhowException(SseDeserializer deserializer);
@@ -198,6 +283,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   ActionFeedback sse_decode_action_feedback(SseDeserializer deserializer);
 
   @protected
+  AdultAttemptDto sse_decode_adult_attempt_dto(SseDeserializer deserializer);
+
+  @protected
+  AdultFilterDto sse_decode_adult_filter_dto(SseDeserializer deserializer);
+
+  @protected
   AnalyticsSummaryDto sse_decode_analytics_summary_dto(
     SseDeserializer deserializer,
   );
@@ -209,6 +300,11 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   bool sse_decode_bool(SseDeserializer deserializer);
+
+  @protected
+  AdultFilterDto sse_decode_box_autoadd_adult_filter_dto(
+    SseDeserializer deserializer,
+  );
 
   @protected
   FocusFiltersDto sse_decode_box_autoadd_focus_filters_dto(
@@ -224,13 +320,29 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  ConflictDto sse_decode_conflict_dto(SseDeserializer deserializer);
+
+  @protected
   DailyUsageDto sse_decode_daily_usage_dto(SseDeserializer deserializer);
 
   @protected
   DatabaseStatsDto sse_decode_database_stats_dto(SseDeserializer deserializer);
 
   @protected
+  DnsProviderDto sse_decode_dns_provider_dto(SseDeserializer deserializer);
+
+  @protected
   EngineStatus sse_decode_engine_status(SseDeserializer deserializer);
+
+  @protected
+  ExtensionReportDto sse_decode_extension_report_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  ExtensionUpdateStatusDto sse_decode_extension_update_status_dto(
+    SseDeserializer deserializer,
+  );
 
   @protected
   double sse_decode_f_64(SseDeserializer deserializer);
@@ -239,10 +351,21 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   FocusFiltersDto sse_decode_focus_filters_dto(SseDeserializer deserializer);
 
   @protected
+  HolidayDto sse_decode_holiday_dto(SseDeserializer deserializer);
+
+  @protected
+  HolidayQuotaDto sse_decode_holiday_quota_dto(SseDeserializer deserializer);
+
+  @protected
   int sse_decode_i_32(SseDeserializer deserializer);
 
   @protected
   PlatformInt64 sse_decode_i_64(SseDeserializer deserializer);
+
+  @protected
+  IncognitoAccessDto sse_decode_incognito_access_dto(
+    SseDeserializer deserializer,
+  );
 
   @protected
   InstalledAppDto sse_decode_installed_app_dto(SseDeserializer deserializer);
@@ -254,7 +377,33 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   List<String> sse_decode_list_String(SseDeserializer deserializer);
 
   @protected
+  List<AdultAttemptDto> sse_decode_list_adult_attempt_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  List<ConflictDto> sse_decode_list_conflict_dto(SseDeserializer deserializer);
+
+  @protected
   List<DailyUsageDto> sse_decode_list_daily_usage_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  List<DnsProviderDto> sse_decode_list_dns_provider_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  List<ExtensionReportDto> sse_decode_list_extension_report_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  List<HolidayDto> sse_decode_list_holiday_dto(SseDeserializer deserializer);
+
+  @protected
+  List<HolidayQuotaDto> sse_decode_list_holiday_quota_dto(
     SseDeserializer deserializer,
   );
 
@@ -308,12 +457,32 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  List<TamperEventDto> sse_decode_list_tamper_event_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
   List<TopEntityDto> sse_decode_list_top_entity_dto(
     SseDeserializer deserializer,
   );
 
   @protected
   List<WhitelistGroupDto> sse_decode_list_whitelist_group_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  List<YtContentTypeDto> sse_decode_list_yt_content_type_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  List<YtCustomRuleDto> sse_decode_list_yt_custom_rule_dto(
+    SseDeserializer deserializer,
+  );
+
+  @protected
+  List<YtExemptTotalDto> sse_decode_list_yt_exempt_total_dto(
     SseDeserializer deserializer,
   );
 
@@ -353,6 +522,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   RuleItemDto sse_decode_rule_item_dto(SseDeserializer deserializer);
 
   @protected
+  ScreenAlertDto sse_decode_screen_alert_dto(SseDeserializer deserializer);
+
+  @protected
   SiteStatusDto sse_decode_site_status_dto(SseDeserializer deserializer);
 
   @protected
@@ -371,7 +543,13 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  TamperEventDto sse_decode_tamper_event_dto(SseDeserializer deserializer);
+
+  @protected
   TopEntityDto sse_decode_top_entity_dto(SseDeserializer deserializer);
+
+  @protected
+  int sse_decode_u_32(SseDeserializer deserializer);
 
   @protected
   int sse_decode_u_8(SseDeserializer deserializer);
@@ -380,9 +558,21 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_decode_unit(SseDeserializer deserializer);
 
   @protected
+  VaultStatusDto sse_decode_vault_status_dto(SseDeserializer deserializer);
+
+  @protected
   WhitelistGroupDto sse_decode_whitelist_group_dto(
     SseDeserializer deserializer,
   );
+
+  @protected
+  YtContentTypeDto sse_decode_yt_content_type_dto(SseDeserializer deserializer);
+
+  @protected
+  YtCustomRuleDto sse_decode_yt_custom_rule_dto(SseDeserializer deserializer);
+
+  @protected
+  YtExemptTotalDto sse_decode_yt_exempt_total_dto(SseDeserializer deserializer);
 
   @protected
   void sse_encode_AnyhowException(
@@ -406,6 +596,18 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_adult_attempt_dto(
+    AdultAttemptDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_adult_filter_dto(
+    AdultFilterDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_analytics_summary_dto(
     AnalyticsSummaryDto self,
     SseSerializer serializer,
@@ -419,6 +621,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
 
   @protected
   void sse_encode_bool(bool self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_box_autoadd_adult_filter_dto(
+    AdultFilterDto self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_box_autoadd_focus_filters_dto(
@@ -439,6 +647,9 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_conflict_dto(ConflictDto self, SseSerializer serializer);
+
+  @protected
   void sse_encode_daily_usage_dto(DailyUsageDto self, SseSerializer serializer);
 
   @protected
@@ -448,7 +659,25 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_dns_provider_dto(
+    DnsProviderDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_engine_status(EngineStatus self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_extension_report_dto(
+    ExtensionReportDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_extension_update_status_dto(
+    ExtensionUpdateStatusDto self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_f_64(double self, SseSerializer serializer);
@@ -460,10 +689,25 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_holiday_dto(HolidayDto self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_holiday_quota_dto(
+    HolidayQuotaDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_i_32(int self, SseSerializer serializer);
 
   @protected
   void sse_encode_i_64(PlatformInt64 self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_incognito_access_dto(
+    IncognitoAccessDto self,
+    SseSerializer serializer,
+  );
 
   @protected
   void sse_encode_installed_app_dto(
@@ -481,8 +725,44 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_list_String(List<String> self, SseSerializer serializer);
 
   @protected
+  void sse_encode_list_adult_attempt_dto(
+    List<AdultAttemptDto> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_conflict_dto(
+    List<ConflictDto> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_list_daily_usage_dto(
     List<DailyUsageDto> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_dns_provider_dto(
+    List<DnsProviderDto> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_extension_report_dto(
+    List<ExtensionReportDto> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_holiday_dto(
+    List<HolidayDto> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_holiday_quota_dto(
+    List<HolidayQuotaDto> self,
     SseSerializer serializer,
   );
 
@@ -550,6 +830,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_list_tamper_event_dto(
+    List<TamperEventDto> self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_list_top_entity_dto(
     List<TopEntityDto> self,
     SseSerializer serializer,
@@ -558,6 +844,24 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   @protected
   void sse_encode_list_whitelist_group_dto(
     List<WhitelistGroupDto> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_yt_content_type_dto(
+    List<YtContentTypeDto> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_yt_custom_rule_dto(
+    List<YtCustomRuleDto> self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_list_yt_exempt_total_dto(
+    List<YtExemptTotalDto> self,
     SseSerializer serializer,
   );
 
@@ -610,6 +914,12 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_rule_item_dto(RuleItemDto self, SseSerializer serializer);
 
   @protected
+  void sse_encode_screen_alert_dto(
+    ScreenAlertDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_site_status_dto(SiteStatusDto self, SseSerializer serializer);
 
   @protected
@@ -631,7 +941,16 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   );
 
   @protected
+  void sse_encode_tamper_event_dto(
+    TamperEventDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_top_entity_dto(TopEntityDto self, SseSerializer serializer);
+
+  @protected
+  void sse_encode_u_32(int self, SseSerializer serializer);
 
   @protected
   void sse_encode_u_8(int self, SseSerializer serializer);
@@ -640,8 +959,32 @@ abstract class RustLibApiImplPlatform extends BaseApiImpl<RustLibWire> {
   void sse_encode_unit(void self, SseSerializer serializer);
 
   @protected
+  void sse_encode_vault_status_dto(
+    VaultStatusDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
   void sse_encode_whitelist_group_dto(
     WhitelistGroupDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_yt_content_type_dto(
+    YtContentTypeDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_yt_custom_rule_dto(
+    YtCustomRuleDto self,
+    SseSerializer serializer,
+  );
+
+  @protected
+  void sse_encode_yt_exempt_total_dto(
+    YtExemptTotalDto self,
     SseSerializer serializer,
   );
 }

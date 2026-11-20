@@ -1,3 +1,4 @@
+import 'package:chronos_app/services/app_locale.dart';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -5,6 +6,8 @@ import 'package:chronos_app/services/browser_extension_installer.dart';
 import 'package:chronos_app/services/chronos_guard_service.dart';
 import 'package:chronos_app/services/web_block_server.dart';
 import 'package:chronos_app/src/rust/api/simple.dart';
+import 'package:chronos_app/src/rust/api/holidays.dart';
+import 'package:chronos_app/src/rust/api/youtube.dart' show getYoutubeContentTypes;
 import 'package:chronos_app/widgets/add_block_dialog.dart';
 import 'package:chronos_app/widgets/anti_cheat_dialog.dart';
 import 'package:chronos_app/widgets/browser_protection_panel.dart';
@@ -94,27 +97,25 @@ class _RulesViewState extends State<RulesView> with SingleTickerProviderStateMix
                 color: state.mode == 'NUKE' ? Colors.deepOrange : Colors.amber,
               ),
               const SizedBox(width: 8),
-              const Text('Modo Anti-Cheat Ativo!'),
+              Text(tr.modoAntiCheatAtivo),
             ],
           ),
           content: Text(
             state.mode == 'NUKE'
-                ? 'O Chronos está no Modo Nuke (restam ${state.nukeRemainingSeconds ~/ 60}m). '
-                  'Não é permitido $actionName até que o cronômetro expire.'
-                : 'Não é permitido $actionName enquanto o Anti-Cheat estiver ativo. '
-                  'Para alterar regras, você deve primeiro resolver o desafio de digitação estrito do Anti-Cheat.',
+                ? tr.oChronosEstaNoModoNuke(state.nukeRemainingSeconds ~/ 60, actionName)
+                : tr.naoEPermitidoP0EnquantoO(actionName),
             style: const TextStyle(color: Colors.white70),
           ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(ctx),
-              child: const Text('Entendido'),
+              child: Text(tr.entendido),
             ),
             if (state.mode == 'CHALLENGE')
               FilledButton.icon(
                 style: FilledButton.styleFrom(backgroundColor: Colors.amber.shade700),
                 icon: const Icon(Icons.lock_open, size: 16),
-                label: const Text('Resolver Desafio'),
+                label: Text(tr.resolverDesafio),
                 onPressed: () {
                   Navigator.pop(ctx);
                   showDialog(
@@ -138,7 +139,7 @@ class _RulesViewState extends State<RulesView> with SingleTickerProviderStateMix
 
   Future<void> _toggleBlock(String entityId, bool current) async {
     if (current) {
-      final allowed = await _ensureAntiCheatAllowed('desbloquear entidades');
+      final allowed = await _ensureAntiCheatAllowed(tr.desbloquearEntidades);
       if (!allowed) return;
     }
     final res = await toggleEntityBlock(entityId: entityId, blocked: !current);
@@ -148,7 +149,7 @@ class _RulesViewState extends State<RulesView> with SingleTickerProviderStateMix
   }
 
   Future<void> _deleteRule(String entityId) async {
-    final allowed = await _ensureAntiCheatAllowed('remover regras de bloqueio');
+    final allowed = await _ensureAntiCheatAllowed(tr.removerRegrasDeBloqueio);
     if (!allowed) return;
     final res = await deleteRule(entityId: entityId);
     _showFeedback(res);
@@ -157,7 +158,7 @@ class _RulesViewState extends State<RulesView> with SingleTickerProviderStateMix
   }
 
   Future<void> _editRuleTime(RuleItemDto rule) async {
-    final allowed = await _ensureAntiCheatAllowed('editar tempo de bloqueio e agendamento');
+    final allowed = await _ensureAntiCheatAllowed(tr.editarTempoDeBloqueioEAgendamento);
     if (!allowed || !mounted) return;
 
     final result = await AddBlockDialog.show(
@@ -182,14 +183,79 @@ class _RulesViewState extends State<RulesView> with SingleTickerProviderStateMix
       await toggleEntityBlock(entityId: result.entityId, blocked: true);
     }
 
+    _showFeedback(await _applyHolidayQuota(res, result));
+    await _loadAll();
+    widget.onRulesUpdated();
+  }
+
+  List<HolidayQuotaDto> _holidayQuotasSafe() {
+    try {
+      return getHolidayQuotas();
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  String _ruleQuotaSummary(RuleItemDto rule) {
+    final extras = <String>[
+      if (rule.weekendQuotaSeconds != null && rule.weekendQuotaSeconds! > 0)
+        tr.finsDeSemanaP0(_formatSeconds(rule.weekendQuotaSeconds!)),
+      for (final hq in _holidayQuotasSafe())
+        if (hq.entityId == rule.entityId && hq.seconds > 0) 'Feriados: ${_formatSeconds(hq.seconds.toInt())}',
+    ];
+    final extra = extras.isEmpty ? '' : ' (${extras.join(', ')})';
+    return tr.tempoDeTelaP0P1P2(_formatSeconds(rule.dailyQuotaSeconds), extra, _formatPatternSummary(rule.pattern, rule.entityId));
+  }
+
+  /// Holiday quota lives beside the rule (holiday > weekend > weekday). Saved only
+  /// after the rule itself saved; anti-cheat refusals are reported like rule errors.
+  Future<ActionFeedback> _applyHolidayQuota(ActionFeedback ruleRes, BlockConfigResult result) async {
+    if (!ruleRes.success) return ruleRes;
+    final hq = await setHolidayQuota(entityId: result.entityId, seconds: result.holidayQuotaSeconds);
+    return hq.success ? ruleRes : hq;
+  }
+
+  /// Renaming is the only group change allowed while anti-cheat is active.
+  Future<void> _renameRule(RuleItemDto rule) async {
+    final ctl = TextEditingController(text: rule.displayName);
+    final name = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(tr.renomear),
+        content: TextField(
+          controller: ctl,
+          autofocus: true,
+          decoration: InputDecoration(labelText: tr.nome),
+          onSubmitted: (v) => Navigator.pop(ctx, v),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: Text(tr.cancelar)),
+          FilledButton(onPressed: () => Navigator.pop(ctx, ctl.text), child: Text(tr.salvar)),
+        ],
+      ),
+    );
+    ctl.dispose();
+    final clean = name?.trim() ?? '';
+    if (clean.isEmpty || clean == rule.displayName) return;
+    final res = await saveRule(
+      entityId: rule.entityId,
+      displayName: clean,
+      dailyQuotaSeconds: rule.dailyQuotaSeconds,
+      mode: rule.mode,
+      targetType: rule.targetType,
+      pattern: rule.pattern,
+      weekendQuotaSeconds: rule.weekendQuotaSeconds,
+      scheduleJson: rule.scheduleJson,
+    );
     _showFeedback(res);
     await _loadAll();
     widget.onRulesUpdated();
   }
 
   Future<void> _addAppsToRule(RuleItemDto rule) async {
-    // Adicionar aplicativos ou sites a uma sessão torna a regra mais restritiva,
-    // portanto é 100% PERMITIDO mesmo com o Modo Anti-Cheat (inclusive Nuke) ativo!
+    // Anti-cheat: groups can only be renamed.
+    final allowed = await _ensureAntiCheatAllowed(tr.adicionarAppsOuSitesAoGrupo);
+    if (!allowed || !mounted) return;
     final result = await AddBlockDialog.show(
       context,
       initialRule: rule,
@@ -236,14 +302,14 @@ class _RulesViewState extends State<RulesView> with SingleTickerProviderStateMix
       await toggleEntityBlock(entityId: result.entityId, blocked: true);
     }
 
-    _showFeedback(res);
+    _showFeedback(await _applyHolidayQuota(res, result));
     await _loadAll();
     widget.onRulesUpdated();
   }
 
   Future<void> _openAddWhitelistDialog([WhitelistGroupDto? initial]) async {
     final allowed = await _ensureAntiCheatAllowed(
-      initial != null ? 'editar grupos de lista branca' : 'adicionar grupos de lista branca',
+      initial != null ? tr.editarGruposDeListaBranca : tr.adicionarGruposDeListaBranca,
     );
     if (!allowed) return;
 
@@ -263,19 +329,19 @@ class _RulesViewState extends State<RulesView> with SingleTickerProviderStateMix
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Remover Grupo de Lista Branca'),
-        content: const Text(
-          'Deseja realmente remover este grupo de lista branca? Os aplicativos e sites configurados nele deixarão de ser protegidos e voltarão a ser contabilizados ou bloqueados.',
+        title: Text(tr.removerGrupoDeListaBranca),
+        content: Text(
+          tr.desejaRealmenteRemoverEsteGrupoDe,
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancelar'),
+            child: Text(tr.cancelar),
           ),
           FilledButton(
             style: FilledButton.styleFrom(backgroundColor: Colors.redAccent),
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Remover'),
+            child: Text(tr.remover),
           ),
         ],
       ),
@@ -324,24 +390,24 @@ class _RulesViewState extends State<RulesView> with SingleTickerProviderStateMix
   }
 
   Future<void> _removeAppFromRule(RuleItemDto rule, dynamic rawAppItem, String appDisplayName) async {
-    final allowed = await _ensureAntiCheatAllowed('remover aplicativo do grupo de bloqueio');
+    final allowed = await _ensureAntiCheatAllowed(tr.removerAplicativoDoGrupoDeBloqueio);
     if (!allowed) return;
 
     if (!mounted) return;
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Remover do Grupo de Bloqueio'),
-        content: Text('Deseja realmente remover "$appDisplayName" deste grupo de bloqueio?'),
+        title: Text(tr.removerDoGrupoDeBloqueio),
+        content: Text(tr.desejaRealmenteRemoverP0DesteGrupo(appDisplayName)),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancelar'),
+            child: Text(tr.cancelar),
           ),
           FilledButton(
             style: FilledButton.styleFrom(backgroundColor: Colors.redAccent),
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Remover'),
+            child: Text(tr.remover),
           ),
         ],
       ),
@@ -384,7 +450,7 @@ class _RulesViewState extends State<RulesView> with SingleTickerProviderStateMix
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Erro ao remover aplicativo: $e'), backgroundColor: Colors.redAccent),
+          SnackBar(content: Text(tr.erroAoRemoverAplicativoP0(e)), backgroundColor: Colors.redAccent),
         );
       }
     }
@@ -394,17 +460,17 @@ class _RulesViewState extends State<RulesView> with SingleTickerProviderStateMix
     final confirm = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Remover da Lista Branca'),
-        content: Text('Deseja remover "$appDisplayName" desta lista branca? O app deixará de ser protegido contra bloqueios.'),
+        title: Text(tr.removerDaListaBranca),
+        content: Text(tr.desejaRemoverP0DestaListaBranca(appDisplayName)),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('Cancelar'),
+            child: Text(tr.cancelar),
           ),
           FilledButton(
             style: FilledButton.styleFrom(backgroundColor: Colors.redAccent),
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('Remover'),
+            child: Text(tr.remover),
           ),
         ],
       ),
@@ -442,17 +508,17 @@ class _RulesViewState extends State<RulesView> with SingleTickerProviderStateMix
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Erro ao remover da lista branca: $e'), backgroundColor: Colors.redAccent),
+          SnackBar(content: Text(tr.erroAoRemoverDaListaBranca(e)), backgroundColor: Colors.redAccent),
         );
       }
     }
   }
 
   String _formatSeconds(int s) {
-    if (s <= 0) return '0m (Bloqueio Total)';
+    if (s <= 0) return tr.t0mBloqueioTotal;
     final h = s ~/ 3600;
     final m = (s % 3600) ~/ 60;
-    if (h > 0) return '${h}h ${m}m';
+    if (h > 0) return tr.p0HP1M(h, m);
     return '${m}m';
   }
 
@@ -483,6 +549,37 @@ class _RulesViewState extends State<RulesView> with SingleTickerProviderStateMix
     }
     final appItems = items.map((i) => RuleAppItem(i, _cleanAppName(i))).toList();
     return (appItems, <String>[]);
+  }
+
+  /// Labels of the YouTube content types allowed by a whitelist group ("Educacional", ...).
+  List<String> _whitelistYoutubeTypeLabels(WhitelistGroupDto group) {
+    final items = group.items.trim();
+    if (!items.startsWith('{')) return const [];
+    Map<String, String> labels = const {};
+    try {
+      labels = {for (final t in getYoutubeContentTypes()) t.id: t.label};
+    } catch (_) {}
+    try {
+      final decoded = jsonDecode(items);
+      if (decoded is Map && decoded['yt_types'] is List) {
+        return [
+          for (final t in decoded['yt_types'] as List)
+            if ((t is Map ? t['type'] : t)?.toString().trim().isNotEmpty == true)
+              labels[(t is Map ? t['type'] : t).toString()] ?? (t is Map ? t['type'] : t).toString(),
+        ];
+      }
+    } catch (_) {}
+    return const [];
+  }
+
+  int _whitelistYoutubeTypeCount(WhitelistGroupDto group) {
+    final items = group.items.trim();
+    if (!items.startsWith('{')) return 0;
+    try {
+      final decoded = jsonDecode(items);
+      if (decoded is Map && decoded['yt_types'] is List) return (decoded['yt_types'] as List).length;
+    } catch (_) {}
+    return 0;
   }
 
   (List<RuleAppItem>, List<String>) _parseWhitelistAppsAndSites(WhitelistGroupDto group) {
@@ -526,8 +623,8 @@ class _RulesViewState extends State<RulesView> with SingleTickerProviderStateMix
           final apps = (decoded['apps'] as List?)?.cast<String>() ?? [];
           final sites = (decoded['sites'] as List?)?.cast<String>() ?? [];
           final parts = <String>[];
-          if (apps.isNotEmpty) parts.add('${apps.length} aplicativo(s)');
-          if (sites.isNotEmpty) parts.add('${sites.length} site(s)/palavra(s)');
+          if (apps.isNotEmpty) parts.add(tr.p0AplicativoS(apps.length));
+          if (sites.isNotEmpty) parts.add(tr.p0SiteSPalavraS(sites.length));
           if (parts.isNotEmpty) return parts.join(' • ');
         }
       } catch (_) {}
@@ -542,8 +639,8 @@ class _RulesViewState extends State<RulesView> with SingleTickerProviderStateMix
       if (map is Map && map['time_window_enabled'] == true) {
         final start = map['time_window_start'] ?? '08:00';
         final end = map['time_window_end'] ?? '18:00';
-        final mode = map['time_window_mode'] == 'ALLOW_INSIDE' ? 'Permitir somente' : 'Bloquear';
-        return 'Janela: $mode $start-$end';
+        final mode = map['time_window_mode'] == 'ALLOW_INSIDE' ? tr.permitirSomente : tr.bloquear;
+        return tr.janelaP0P1P2(mode, start, end);
       }
     } catch (_) {}
     return null;
@@ -612,11 +709,11 @@ class _RulesViewState extends State<RulesView> with SingleTickerProviderStateMix
           }
 
           return AlertDialog(
-            title: const Row(
+            title: Row(
               children: [
                 Icon(Icons.extension, color: Colors.blueAccent),
                 SizedBox(width: 8),
-                Text('Extensão & Proteção dos Navegadores'),
+                Text(tr.extensaoProtecaoDosNavegadores),
               ],
             ),
             content: ConstrainedBox(
@@ -626,8 +723,8 @@ class _RulesViewState extends State<RulesView> with SingleTickerProviderStateMix
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
-                      'O Chronos aplica a extensão em navegadores Chromium e o Proxy Seletivo + CA no Firefox de forma totalmente offline.',
+                    Text(
+                      tr.oChronosAplicaAExtensaoEm,
                       style: TextStyle(fontSize: 13, color: Colors.white70),
                     ),
                     const SizedBox(height: 12),
@@ -638,7 +735,7 @@ class _RulesViewState extends State<RulesView> with SingleTickerProviderStateMix
                     ),
                     const SizedBox(height: 14),
                     Text(
-                      'Navegadores instalados detectados (${browsers.length}):',
+                      tr.navegadoresInstaladosDetectadosP0(browsers.length),
                       style: const TextStyle(
                         fontWeight: FontWeight.bold,
                         fontSize: 13,
@@ -664,7 +761,7 @@ class _RulesViewState extends State<RulesView> with SingleTickerProviderStateMix
                         const Icon(Icons.check_circle, color: Colors.tealAccent, size: 16),
                         const SizedBox(width: 6),
                         Text(
-                          'Servidor local ativo na porta ${WebBlockServer.port}',
+                          tr.servidorLocalAtivoNaPortaP0(WebBlockServer.port),
                           style: const TextStyle(fontSize: 12, color: Colors.tealAccent),
                         ),
                       ],
@@ -678,25 +775,25 @@ class _RulesViewState extends State<RulesView> with SingleTickerProviderStateMix
                         await Clipboard.setData(ClipboardData(text: path));
                         await BrowserExtensionInstaller.launchGoogleChromeWithExtensionGuide();
                         showSnack(
-                          'Chrome aberto em chrome://extensions! Cole o caminho copiado ao carregar sem compactação.',
+                          tr.chromeAbertoEmChromeExtensionsCole,
                           true,
                         );
                       },
                       onShowFirefoxGuide: () async {
                         await BrowserExtensionInstaller.launchFirefoxWithExtensionGuide();
                         showSnack(
-                          'Firefox aberto em about:policies para inspeção das políticas locais.',
+                          tr.firefoxAbertoEmAboutPoliciesPara,
                           true,
                         );
                       },
                       onShowGuardTerminal: () async {
                         final launched = await ChronosGuardService.launchInstallerInTerminal();
                         if (launched) {
-                          showSnack('Terminal aberto para autorização do Chronos Guard!', true);
+                          showSnack(tr.terminalAbertoParaAutorizacaoDoChronos, true);
                         } else {
                           final cmd = ChronosGuardService.getInstallCliCommand();
                           await Clipboard.setData(ClipboardData(text: cmd));
-                          showSnack('Comando copiado! Execute no terminal para instalar o Guard.', true);
+                          showSnack(tr.comandoCopiadoExecuteNoTerminalPara, true);
                         }
                       },
                     ),
@@ -707,7 +804,7 @@ class _RulesViewState extends State<RulesView> with SingleTickerProviderStateMix
             actions: [
               TextButton(
                 onPressed: () => Navigator.pop(ctx),
-                child: const Text('Fechar'),
+                child: Text(tr.fechar),
               ),
               FilledButton.icon(
                 style: FilledButton.styleFrom(backgroundColor: Colors.blueAccent.shade700),
@@ -720,8 +817,8 @@ class _RulesViewState extends State<RulesView> with SingleTickerProviderStateMix
                     : const Icon(Icons.security_update_good, size: 16),
                 label: Text(
                   installing
-                      ? 'Configurando...'
-                      : 'Instalar / Atualizar em Todos os Navegadores',
+                      ? tr.configurando
+                      : tr.instalarAtualizarEmTodosOsNavegadores,
                 ),
                 onPressed: installing
                     ? null
@@ -740,7 +837,7 @@ class _RulesViewState extends State<RulesView> with SingleTickerProviderStateMix
                               if (!launched) {
                                 final cmd = ChronosGuardService.getInstallCliCommand();
                                 await Clipboard.setData(ClipboardData(text: cmd));
-                                showSnack('Comando Guard copiado para o terminal!', false);
+                                showSnack(tr.comandoGuardCopiadoParaOTerminal, false);
                               }
                             },
                           );
@@ -770,14 +867,15 @@ class _RulesViewState extends State<RulesView> with SingleTickerProviderStateMix
           tabs: [
             Tab(
               icon: const Icon(Icons.lock_clock),
-              text: 'Sessões & Bloqueios (${_rules.length})',
+              text: tr.sessoesBloqueiosP0(_rules.length),
             ),
             Tab(
               icon: const Icon(Icons.verified_user),
-              text: 'Lista Branca / Whitelist (${_whitelistGroups.length})',
+              text: tr.listaBrancaWhitelistP0(_whitelistGroups.length),
             ),
           ],
         ),
+        _buildConflictsBanner(),
         Expanded(
           child: TabBarView(
             controller: _tabController,
@@ -788,6 +886,46 @@ class _RulesViewState extends State<RulesView> with SingleTickerProviderStateMix
           ),
         ),
       ],
+    );
+  }
+
+  /// Existing conflicts (whitelist x block, two whitelists, overlapping blocks, YouTube
+  /// "show only"). New ones are refused on save; these were there before.
+  Widget _buildConflictsBanner() {
+    List<ConflictDto> conflicts;
+    try {
+      conflicts = getConflicts();
+    } catch (_) {
+      conflicts = const [];
+    }
+    if (conflicts.isEmpty) return const SizedBox.shrink();
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.fromLTRB(16, 10, 16, 0),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: Colors.amber.shade900.withValues(alpha: 0.18),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.amber.withValues(alpha: 0.4)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.warning_amber_rounded, color: Colors.amber, size: 18),
+              const SizedBox(width: 8),
+              Text(tr.conflitosEncontradosP0(conflicts.length),
+                  style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.amberAccent)),
+            ],
+          ),
+          const SizedBox(height: 4),
+          for (final c in conflicts.take(6))
+            Text('• ${c.message}', style: const TextStyle(fontSize: 12, color: Colors.white70)),
+          if (conflicts.length > 6)
+            Text(tr.eMaisP0(conflicts.length - 6), style: const TextStyle(fontSize: 12, color: Colors.white54)),
+        ],
+      ),
     );
   }
 
@@ -806,12 +944,12 @@ class _RulesViewState extends State<RulesView> with SingleTickerProviderStateMix
                 children: [
                   OutlinedButton.icon(
                     icon: const Icon(Icons.extension, size: 16, color: Colors.blueAccent),
-                    label: const Text('Extensão Web', style: TextStyle(color: Colors.blueAccent)),
+                    label: Text(tr.extensaoWeb, style: TextStyle(color: Colors.blueAccent)),
                     onPressed: _showExtensionDialog,
                   ),
                   FilledButton.icon(
                     icon: const Icon(Icons.add, size: 18),
-                    label: const Text('Nova Sessão de Bloqueio'),
+                    label: Text(tr.novaSessaoDeBloqueio),
                     onPressed: _openAddRuleDialog,
                   ),
                 ],
@@ -822,7 +960,7 @@ class _RulesViewState extends State<RulesView> with SingleTickerProviderStateMix
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Sessões Configuradas (${_rules.length})',
+                      tr.sessoesConfiguradasP0(_rules.length),
                       style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
                     ),
                     const SizedBox(height: 8),
@@ -836,7 +974,7 @@ class _RulesViewState extends State<RulesView> with SingleTickerProviderStateMix
                 children: [
                   Expanded(
                     child: Text(
-                      'Sessões Configuradas (${_rules.length})',
+                      tr.sessoesConfiguradasP0(_rules.length),
                       style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
                     ),
                   ),
@@ -849,9 +987,9 @@ class _RulesViewState extends State<RulesView> with SingleTickerProviderStateMix
         ),
         Expanded(
           child: _rules.isEmpty
-              ? const Center(
+              ? Center(
                   child: Text(
-                    'Nenhuma sessão criada ainda.\nClique em "Nova Sessão de Bloqueio" para agrupar apps ou sites.',
+                    tr.nenhumaSessaoCriadaAindaCliqueEm,
                     textAlign: TextAlign.center,
                     style: TextStyle(color: Colors.white54),
                   ),
@@ -964,9 +1102,7 @@ class _RulesViewState extends State<RulesView> with SingleTickerProviderStateMix
                                               ),
                                               const SizedBox(height: 4),
                                               Text(
-                                                rule.weekendQuotaSeconds != null && rule.weekendQuotaSeconds! > 0
-                                                    ? 'Tempo de tela: ${_formatSeconds(rule.dailyQuotaSeconds)} (Fins de semana: ${_formatSeconds(rule.weekendQuotaSeconds!)}) • ${_formatPatternSummary(rule.pattern, rule.entityId)}'
-                                                    : 'Tempo de tela: ${_formatSeconds(rule.dailyQuotaSeconds)} • ${_formatPatternSummary(rule.pattern, rule.entityId)}',
+                                                _ruleQuotaSummary(rule),
                                                 style: const TextStyle(color: Colors.white60, fontSize: 12),
                                               ),
                                               if (isRatchetActive)
@@ -977,7 +1113,7 @@ class _RulesViewState extends State<RulesView> with SingleTickerProviderStateMix
                                                       Icon(Icons.lock_clock, size: 14, color: Colors.amber.shade300),
                                                       const SizedBox(width: 4),
                                                       Text(
-                                                        'Catraca Travada (Aumentos proibidos)',
+                                                        tr.catracaTravadaAumentosProibidos,
                                                         style: TextStyle(fontSize: 11, color: Colors.amber.shade300),
                                                       ),
                                                     ],
@@ -1001,7 +1137,7 @@ class _RulesViewState extends State<RulesView> with SingleTickerProviderStateMix
                                           mainAxisSize: MainAxisSize.min,
                                           children: [
                                             IconButton(
-                                              tooltip: isExpanded ? 'Recolher' : 'Expandir',
+                                              tooltip: isExpanded ? tr.recolher : tr.expandir,
                                               icon: Icon(
                                                 isExpanded ? Icons.expand_less : Icons.expand_more,
                                                 color: Colors.tealAccent,
@@ -1018,19 +1154,21 @@ class _RulesViewState extends State<RulesView> with SingleTickerProviderStateMix
                                               },
                                             ),
                                             IconButton(
-                                              tooltip: 'Editar Tempo de Bloqueio',
+                                              tooltip: tr.editarTempoDeBloqueio,
                                               icon: const Icon(Icons.timer_outlined, color: Colors.amberAccent, size: 20),
                                               onPressed: () => _editRuleTime(rule),
                                             ),
                                             IconButton(
-                                              tooltip: 'Adicionar Apps / Sites ao Grupo (Permitido com Anti-Cheat)',
+                                              tooltip: tr.adicionarAppsSitesAoGrupo,
                                               icon: const Icon(Icons.library_add_outlined, color: Colors.cyanAccent, size: 20),
                                               onPressed: () => _addAppsToRule(rule),
                                             ),
                                             PopupMenuButton<String>(
                                               icon: const Icon(Icons.more_vert, color: Colors.white70, size: 20),
                                               onSelected: (val) {
-                                                if (val == 'time') {
+                                                if (val == 'rename') {
+                                                  _renameRule(rule);
+                                                } else if (val == 'time') {
                                                   _editRuleTime(rule);
                                                 } else if (val == 'apps') {
                                                   _addAppsToRule(rule);
@@ -1043,23 +1181,33 @@ class _RulesViewState extends State<RulesView> with SingleTickerProviderStateMix
                                                 }
                                               },
                                               itemBuilder: (ctx) => [
-                                                const PopupMenuItem(
+                                                PopupMenuItem(
+                                                  value: 'rename',
+                                                  child: Row(
+                                                    children: [
+                                                      Icon(Icons.drive_file_rename_outline, color: Colors.white70, size: 16),
+                                                      SizedBox(width: 8),
+                                                      Text(tr.renomear),
+                                                    ],
+                                                  ),
+                                                ),
+                                                PopupMenuItem(
                                                   value: 'time',
                                                   child: Row(
                                                     children: [
                                                       Icon(Icons.timer_outlined, color: Colors.amberAccent, size: 16),
                                                       SizedBox(width: 8),
-                                                      Text('Editar Tempo de Bloqueio'),
+                                                      Text(tr.editarTempoDeBloqueio),
                                                     ],
                                                   ),
                                                 ),
-                                                const PopupMenuItem(
+                                                PopupMenuItem(
                                                   value: 'apps',
                                                   child: Row(
                                                     children: [
                                                       Icon(Icons.library_add_outlined, color: Colors.cyanAccent, size: 16),
                                                       SizedBox(width: 8),
-                                                      Text('Adicionar Apps / Sites ao Grupo'),
+                                                      Text(tr.adicionarAppsSitesAoGrupo),
                                                     ],
                                                   ),
                                                 ),
@@ -1069,7 +1217,7 @@ class _RulesViewState extends State<RulesView> with SingleTickerProviderStateMix
                                                     children: [
                                                       Icon(isSelected ? Icons.radio_button_checked : Icons.radio_button_unchecked, color: Colors.tealAccent, size: 16),
                                                       const SizedBox(width: 8),
-                                                      const Text('Focar no Dashboard'),
+                                                      Text(tr.focarNoDashboard),
                                                     ],
                                                   ),
                                                 ),
@@ -1079,17 +1227,17 @@ class _RulesViewState extends State<RulesView> with SingleTickerProviderStateMix
                                                     children: [
                                                       Icon(rule.isBlockedCompletely ? Icons.lock_open : Icons.lock, color: rule.isBlockedCompletely ? Colors.greenAccent : Colors.redAccent, size: 16),
                                                       const SizedBox(width: 8),
-                                                      Text(rule.isBlockedCompletely ? 'Desbloquear' : 'Bloquear Completamente'),
+                                                      Text(rule.isBlockedCompletely ? tr.desbloquear : tr.bloquearCompletamente),
                                                     ],
                                                   ),
                                                 ),
-                                                const PopupMenuItem(
+                                                PopupMenuItem(
                                                   value: 'delete',
                                                   child: Row(
                                                     children: [
                                                       Icon(Icons.delete_outline, color: Colors.redAccent, size: 16),
                                                       SizedBox(width: 8),
-                                                      Text('Remover Sessão'),
+                                                      Text(tr.removerSessao),
                                                     ],
                                                   ),
                                                 ),
@@ -1103,7 +1251,7 @@ class _RulesViewState extends State<RulesView> with SingleTickerProviderStateMix
                                         mainAxisSize: MainAxisSize.min,
                                         children: [
                                           IconButton(
-                                            tooltip: isExpanded ? 'Recolher itens da sessão' : 'Expandir para ver todos os apps e sites',
+                                            tooltip: isExpanded ? tr.recolherItensDaSessao : tr.expandirParaVerTodosOsApps,
                                             icon: Icon(
                                               isExpanded ? Icons.expand_less : Icons.expand_more,
                                               color: Colors.tealAccent,
@@ -1119,17 +1267,17 @@ class _RulesViewState extends State<RulesView> with SingleTickerProviderStateMix
                                             },
                                           ),
                                           IconButton(
-                                            tooltip: 'Editar Tempo de Bloqueio',
+                                            tooltip: tr.editarTempoDeBloqueio,
                                             icon: const Icon(Icons.timer_outlined, color: Colors.amberAccent),
                                             onPressed: () => _editRuleTime(rule),
                                           ),
                                           IconButton(
-                                            tooltip: 'Adicionar Aplicativos / Sites (Permitido no Anti-Cheat)',
+                                            tooltip: tr.adicionarAplicativosSitesPermitidoNoAnti,
                                             icon: const Icon(Icons.library_add_outlined, color: Colors.cyanAccent),
                                             onPressed: () => _addAppsToRule(rule),
                                           ),
                                           IconButton(
-                                            tooltip: isSelected ? 'Sessão selecionada' : 'Focar no Dashboard',
+                                            tooltip: isSelected ? tr.sessaoSelecionada : tr.focarNoDashboard,
                                             icon: Icon(
                                               isSelected ? Icons.radio_button_checked : Icons.radio_button_unchecked,
                                               color: isSelected ? Colors.tealAccent : Colors.grey,
@@ -1137,7 +1285,7 @@ class _RulesViewState extends State<RulesView> with SingleTickerProviderStateMix
                                             onPressed: () => widget.onSelectEntity(rule.entityId),
                                           ),
                                           IconButton(
-                                            tooltip: rule.isBlockedCompletely ? 'Desbloquear' : 'Bloquear Completamente',
+                                            tooltip: rule.isBlockedCompletely ? tr.desbloquear : tr.bloquearCompletamente,
                                             icon: Icon(
                                               rule.isBlockedCompletely ? Icons.lock : Icons.lock_open,
                                               color: rule.isBlockedCompletely ? Colors.redAccent : Colors.greenAccent,
@@ -1145,7 +1293,7 @@ class _RulesViewState extends State<RulesView> with SingleTickerProviderStateMix
                                             onPressed: () => _toggleBlock(rule.entityId, rule.isBlockedCompletely),
                                           ),
                                           IconButton(
-                                            tooltip: 'Remover Sessão',
+                                            tooltip: tr.removerSessao,
                                             icon: const Icon(Icons.delete_outline, color: Colors.white38),
                                             onPressed: () => _deleteRule(rule.entityId),
                                           ),
@@ -1161,7 +1309,7 @@ class _RulesViewState extends State<RulesView> with SingleTickerProviderStateMix
                                 const SizedBox(height: 10),
                                 if (appsList.isNotEmpty) ...[
                                   Text(
-                                    'Aplicativos Bloqueados (${appsList.length}):',
+                                    tr.aplicativosBloqueadosP0(appsList.length),
                                     style: const TextStyle(
                                       fontSize: 12,
                                       fontWeight: FontWeight.bold,
@@ -1192,7 +1340,7 @@ class _RulesViewState extends State<RulesView> with SingleTickerProviderStateMix
                                               ),
                                             ),
                                             IconButton(
-                                              tooltip: 'Remover ${appItem.name} do grupo (Anti-Cheat restrito)',
+                                              tooltip: tr.removerP0DoGrupoAntiCheat(appItem.name),
                                               icon: const Icon(Icons.delete_outline, size: 18, color: Colors.redAccent),
                                               onPressed: () => _removeAppFromRule(rule, appItem.raw, appItem.name),
                                             ),
@@ -1205,7 +1353,7 @@ class _RulesViewState extends State<RulesView> with SingleTickerProviderStateMix
                                 ],
                                 if (sitesList.isNotEmpty) ...[
                                   Text(
-                                    'Sites e Palavras-Chave Bloqueados (${sitesList.length}):',
+                                    tr.sitesEPalavrasChaveBloqueadosP0(sitesList.length),
                                     style: const TextStyle(
                                       fontSize: 12,
                                       fontWeight: FontWeight.bold,
@@ -1237,8 +1385,8 @@ class _RulesViewState extends State<RulesView> with SingleTickerProviderStateMix
                                   ),
                                 ],
                                 if (appsList.isEmpty && sitesList.isEmpty)
-                                  const Text(
-                                    'Nenhum aplicativo ou site listado nesta sessão.',
+                                  Text(
+                                    tr.nenhumAplicativoOuSiteListadoNesta,
                                     style: TextStyle(fontSize: 12, color: Colors.white54),
                                   ),
                               ],
@@ -1262,13 +1410,13 @@ class _RulesViewState extends State<RulesView> with SingleTickerProviderStateMix
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Text(
-                'Grupos de Lista Branca (${_whitelistGroups.length})',
+                tr.gruposDeListaBrancaP0(_whitelistGroups.length),
                 style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
               ),
               FilledButton.icon(
                 style: FilledButton.styleFrom(backgroundColor: Colors.teal.shade700),
                 icon: const Icon(Icons.verified_user, size: 18),
-                label: const Text('Novo Grupo de Lista Branca'),
+                label: Text(tr.novoGrupoDeListaBranca),
                 onPressed: _openAddWhitelistDialog,
               ),
             ],
@@ -1276,9 +1424,9 @@ class _RulesViewState extends State<RulesView> with SingleTickerProviderStateMix
         ),
         Expanded(
           child: _whitelistGroups.isEmpty
-              ? const Center(
+              ? Center(
                   child: Text(
-                    'Nenhum grupo de lista branca criado.\nApps e sites em listas brancas são protegidos contra bloqueios e finalizações.',
+                    tr.nenhumGrupoDeListaBrancaCriado,
                     textAlign: TextAlign.center,
                     style: TextStyle(color: Colors.white54),
                   ),
@@ -1345,8 +1493,8 @@ class _RulesViewState extends State<RulesView> with SingleTickerProviderStateMix
                                                       borderRadius: BorderRadius.circular(4),
                                                       border: Border.all(color: Colors.tealAccent, width: 0.8),
                                                     ),
-                                                    child: const Text(
-                                                      'PROTEÇÃO TOTAL',
+                                                    child: Text(
+                                                      tr.protecaoTotal,
                                                       style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.tealAccent),
                                                     ),
                                                   ),
@@ -1374,13 +1522,33 @@ class _RulesViewState extends State<RulesView> with SingleTickerProviderStateMix
                                                         style: const TextStyle(fontSize: 10, color: Colors.lightBlueAccent, fontWeight: FontWeight.bold),
                                                       ),
                                                     ),
+                                                  if (_whitelistYoutubeTypeCount(group) > 0)
+                                                    Container(
+                                                      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                                      decoration: BoxDecoration(
+                                                        color: Colors.red.withValues(alpha: 0.15),
+                                                        borderRadius: BorderRadius.circular(4),
+                                                      ),
+                                                      child: Text(
+                                                        tr.p0TiposYoutube(_whitelistYoutubeTypeCount(group)),
+                                                        style: const TextStyle(fontSize: 10, color: Colors.redAccent, fontWeight: FontWeight.bold),
+                                                      ),
+                                                    ),
                                                 ],
                                               ),
                                               const SizedBox(height: 4),
-                                              const Text(
-                                                'Itens protegidos contra contagem de tempo de tela e fechamento automático',
+                                              Text(
+                                                tr.itensProtegidosContraContagemDeTempo,
                                                 style: TextStyle(color: Colors.white60, fontSize: 12),
                                               ),
+                                              if (_whitelistYoutubeTypeLabels(group).isNotEmpty)
+                                                Padding(
+                                                  padding: const EdgeInsets.only(top: 4),
+                                                  child: Text(
+                                                    tr.youtubePermitidoP0(_whitelistYoutubeTypeLabels(group).join(', ')),
+                                                    style: const TextStyle(color: Colors.redAccent, fontSize: 12),
+                                                  ),
+                                                ),
                                             ],
                                           ),
                                         ),
@@ -1401,7 +1569,7 @@ class _RulesViewState extends State<RulesView> with SingleTickerProviderStateMix
                                           IconButton(
                                             visualDensity: VisualDensity.compact,
                                             constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-                                            tooltip: isExpanded ? 'Recolher itens' : 'Expandir itens',
+                                            tooltip: isExpanded ? tr.recolherItens : tr.expandirItens,
                                             icon: Icon(
                                               isExpanded ? Icons.expand_less : Icons.expand_more,
                                               color: Colors.tealAccent,
@@ -1420,14 +1588,14 @@ class _RulesViewState extends State<RulesView> with SingleTickerProviderStateMix
                                           IconButton(
                                             visualDensity: VisualDensity.compact,
                                             constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-                                            tooltip: 'Editar Grupo',
+                                            tooltip: tr.editarGrupo,
                                             icon: const Icon(Icons.edit_outlined, color: Colors.cyanAccent, size: 20),
                                             onPressed: () => _openAddWhitelistDialog(group),
                                           ),
                                           IconButton(
                                             visualDensity: VisualDensity.compact,
                                             constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-                                            tooltip: 'Remover Grupo',
+                                            tooltip: tr.removerGrupo,
                                             icon: const Icon(Icons.delete_outline, color: Colors.redAccent, size: 20),
                                             onPressed: () => _deleteWhitelist(group.groupId),
                                           ),
@@ -1441,7 +1609,7 @@ class _RulesViewState extends State<RulesView> with SingleTickerProviderStateMix
                                         IconButton(
                                           visualDensity: VisualDensity.compact,
                                           constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-                                          tooltip: isExpanded ? 'Recolher itens' : 'Expandir itens',
+                                          tooltip: isExpanded ? tr.recolherItens : tr.expandirItens,
                                           icon: Icon(
                                             isExpanded ? Icons.expand_less : Icons.expand_more,
                                             color: Colors.tealAccent,
@@ -1459,14 +1627,14 @@ class _RulesViewState extends State<RulesView> with SingleTickerProviderStateMix
                                         IconButton(
                                           visualDensity: VisualDensity.compact,
                                           constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-                                          tooltip: 'Editar Grupo de Lista Branca',
+                                          tooltip: tr.editarGrupoDeListaBranca,
                                           icon: const Icon(Icons.edit_outlined, color: Colors.cyanAccent),
                                           onPressed: () => _openAddWhitelistDialog(group),
                                         ),
                                         IconButton(
                                           visualDensity: VisualDensity.compact,
                                           constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-                                          tooltip: 'Remover Grupo de Lista Branca',
+                                          tooltip: tr.removerGrupoDeListaBranca,
                                           icon: const Icon(Icons.delete_outline, color: Colors.redAccent),
                                           onPressed: () => _deleteWhitelist(group.groupId),
                                         ),
@@ -1482,7 +1650,7 @@ class _RulesViewState extends State<RulesView> with SingleTickerProviderStateMix
                                 const SizedBox(height: 10),
                                 if (appsList.isNotEmpty) ...[
                                   Text(
-                                    'Aplicativos Protegidos (${appsList.length}):',
+                                    tr.aplicativosProtegidosP0(appsList.length),
                                     style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.purpleAccent),
                                   ),
                                   const SizedBox(height: 6),
@@ -1509,7 +1677,7 @@ class _RulesViewState extends State<RulesView> with SingleTickerProviderStateMix
                                               ),
                                             ),
                                             IconButton(
-                                              tooltip: 'Remover ${appItem.name} da lista branca',
+                                              tooltip: tr.removerP0DaListaBranca(appItem.name),
                                               icon: const Icon(Icons.delete_outline, size: 18, color: Colors.redAccent),
                                               onPressed: () => _removeAppFromWhitelist(group, appItem.raw, appItem.name),
                                             ),
@@ -1522,7 +1690,7 @@ class _RulesViewState extends State<RulesView> with SingleTickerProviderStateMix
                                 ],
                                 if (sitesList.isNotEmpty) ...[
                                   Text(
-                                    'Sites e Palavras Protegidos (${sitesList.length}):',
+                                    tr.sitesEPalavrasProtegidosP0(sitesList.length),
                                     style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.lightBlueAccent),
                                   ),
                                   const SizedBox(height: 6),
@@ -1534,6 +1702,25 @@ class _RulesViewState extends State<RulesView> with SingleTickerProviderStateMix
                                         backgroundColor: Colors.blue.shade900.withValues(alpha: 0.4),
                                         avatar: const Icon(Icons.public, size: 14, color: Colors.lightBlueAccent),
                                         label: Text(site, style: const TextStyle(fontSize: 12, color: Colors.white)),
+                                      );
+                                    }).toList(),
+                                  ),
+                                ],
+                                if (_whitelistYoutubeTypeLabels(group).isNotEmpty) ...[
+                                  const SizedBox(height: 8),
+                                  Text(
+                                    tr.tiposDoYoutubePermitidosP0(_whitelistYoutubeTypeLabels(group).length),
+                                    style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.redAccent),
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Wrap(
+                                    spacing: 6,
+                                    runSpacing: 6,
+                                    children: _whitelistYoutubeTypeLabels(group).map((label) {
+                                      return Chip(
+                                        backgroundColor: Colors.red.shade900.withValues(alpha: 0.35),
+                                        avatar: const Icon(Icons.play_circle_outline, size: 14, color: Colors.redAccent),
+                                        label: Text(label, style: const TextStyle(fontSize: 12, color: Colors.white)),
                                       );
                                     }).toList(),
                                   ),

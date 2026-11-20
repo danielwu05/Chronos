@@ -246,11 +246,130 @@
     });
   }
 
+  function skipCurrentShort() {
+    const nextBtn =
+      document.querySelector("#navigation-button-down button") ||
+      document.querySelector('button[aria-label*="Next" i], button[aria-label*="Próximo" i]');
+    if (nextBtn) {
+      nextBtn.click();
+      return;
+    }
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", code: "ArrowDown", keyCode: 40, bubbles: true }));
+  }
+
+  function runYoutubeTypeFilter() {
+    const ytFilter = globalThis.ChronosYoutubeTypeFilter;
+    if (!ytFilter || typeof ytFilter.apply !== "function" || !activeFocusFilters) return;
+    if (!window.location.hostname.toLowerCase().includes("youtube.com")) return;
+    ytFilter.apply(activeFocusFilters, {
+      document,
+      location: window.location,
+      classifyItems: (items, done) => {
+        try {
+          chrome.runtime.sendMessage({ type: "CLASSIFY_YT_VIDEOS", items }, (resp) => {
+            done(chrome.runtime.lastError || !resp ? { success: false, results: [] } : resp);
+          });
+        } catch (_) {
+          done({ success: false, results: [] });
+        }
+      },
+      skipShort: skipCurrentShort,
+    });
+  }
+
+  // Local image AI (+18 images): settings come with the CHECK_URL response.
+  let activeAdultFilter = null;
+  let imageAiStateSent = "";
+  function runImageNsfwFilter() {
+    if (!core || !core.imageNsfwFilter || document.visibilityState === "hidden") return;
+    const state = `${window.location.hostname} cfg=${JSON.stringify(activeAdultFilter)} imgs=${document.images.length} pending=${
+      document.querySelectorAll('img[data-chronos-img="pending"]').length
+    }`;
+    if (state !== imageAiStateSent && /google|bing|duckduckgo/.test(window.location.hostname)) {
+      imageAiStateSent = state;
+      try {
+        chrome.runtime.sendMessage({ type: "IMAGE_AI_PAGE_STATE", state });
+      } catch (_) {}
+    }
+    core.imageNsfwFilter.apply(activeAdultFilter, {
+      document,
+      location: window.location,
+      classify: (url) =>
+        new Promise((resolve) => {
+          try {
+            chrome.runtime.sendMessage({ type: "CLASSIFY_IMAGE", url }, (resp) => {
+              resolve(chrome.runtime.lastError ? null : resp || null);
+            });
+          } catch (_) {
+            resolve(null);
+          }
+        }),
+      onBlockPage: (reason) => {
+        try {
+          chrome.runtime.sendMessage({ type: "BLOCK_ADULT_PAGE", url: window.location.href, reason, kind: "image" });
+        } catch (_) {}
+      },
+    });
+  }
+
+  // +18 posts/pages on Reddit and X (focus filters rdBlockNsfw / twBlockSensitive).
+  let adultPageReported = "";
+  // X +18 signals from x_sensitive_hook.js (page world, Chromium only).
+  const xSensitive = { tweets: new Set(), users: new Set(), communities: new Set() };
+  const xTweetCommunity = new Map();
+  // Firefox (MV2) has no "world": "MAIN": inject the API hook as a page script
+  // (Chromium MV3 loads it through the manifest).
+  try {
+    const h = window.location.hostname.toLowerCase();
+    const mv2 = chrome.runtime.getManifest().manifest_version === 2;
+    if (mv2 && (h === "x.com" || h.endsWith(".x.com") || h.includes("twitter.com"))) {
+      const s = document.createElement("script");
+      s.src = chrome.runtime.getURL("x_sensitive_hook.js");
+      s.onload = () => s.remove();
+      (document.head || document.documentElement).appendChild(s);
+    }
+  } catch (_) {}
+  window.addEventListener("chronos-x-sensitive", (ev) => {
+    try {
+      const data = JSON.parse(ev.detail || "{}");
+      (data.tweets || []).forEach((t) => xSensitive.tweets.add(String(t)));
+      (data.users || []).forEach((u) => xSensitive.users.add(String(u).toLowerCase()));
+      (data.communities || []).forEach((c) => xSensitive.communities.add(String(c)));
+      (data.tweetCommunities || []).forEach((pair) => {
+        if (Array.isArray(pair) && pair.length === 2) xTweetCommunity.set(String(pair[0]), String(pair[1]));
+      });
+      xTweetCommunity.forEach((comm, tweet) => {
+        if (xSensitive.communities.has(comm)) xSensitive.tweets.add(tweet);
+      });
+      if (xTweetCommunity.size > 5000) xTweetCommunity.clear();
+      if (xSensitive.tweets.size > 5000) xSensitive.tweets.clear();
+      runAdultSocialFilter();
+    } catch (_) {}
+  });
+  function runAdultSocialFilter() {
+    if (!core || typeof core.scanAdultSocial !== "function" || !activeFocusFilters) return;
+    const host = window.location.hostname.toLowerCase();
+    if (!host.includes("reddit.com") && !host.includes("twitter.com") && host !== "x.com" && !host.endsWith(".x.com")) return;
+    let reason = null;
+    try {
+      reason = core.scanAdultSocial(activeFocusFilters, host, window.location.pathname, document, xSensitive);
+    } catch (_) {}
+    if (reason && adultPageReported !== window.location.href) {
+      adultPageReported = window.location.href;
+      try {
+        chrome.runtime.sendMessage({ type: "BLOCK_ADULT_PAGE", url: window.location.href, reason });
+      } catch (_) {}
+    }
+  }
+
   function scheduleLauncherDomFilter() {
     if (launcherFilterTimer) return;
     launcherFilterTimer = setTimeout(() => {
       launcherFilterTimer = null;
       runLauncherDomFilter();
+      runYoutubeTypeFilter();
+      runAdultSocialFilter();
+      runImageNsfwFilter();
     }, 150);
   }
 
@@ -326,7 +445,9 @@
 
     try {
       chrome.runtime.sendMessage(
-        { type: "CHECK_URL", url: currentUrl, title: currentTitle },
+        // Visible tabs in unfocused windows still get block checks, but must not be
+        // recorded as the active tab (that would hide the tab really being watched).
+        { type: "CHECK_URL", url: currentUrl, title: currentTitle, focused: document.hasFocus() },
         (response) => {
           if (chrome.runtime.lastError || !response) return;
 
@@ -362,6 +483,10 @@
             );
           }
 
+          if (response.adultFilter !== undefined) {
+            activeAdultFilter = response.adultFilter;
+            runImageNsfwFilter();
+          }
           if (hudPanel) {
             hudPanel.updateRule(response.matched && response.rule ? response.rule : null);
           }
@@ -552,7 +677,9 @@
       checkCurrentPage();
       if (activeFocusFilters && document.visibilityState !== "hidden") {
         runLauncherDomFilter();
+        runAdultSocialFilter();
       }
+      runImageNsfwFilter();
     }
     if (hudPanel) {
       hudPanel.pollIfPanelOpen();

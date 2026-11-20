@@ -59,6 +59,11 @@ void main() {
         ) as Map<String, dynamic>;
         expect(packagedManifest['background']?['service_worker'], equals(expectedSw));
         expect(zipListing, contains('popup.js'));
+        // Without update_url Chrome asks the Web Store for updates and never upgrades.
+        final crxManifest = jsonDecode(
+          (await Process.run('unzip', ['-p', innerZip.path, 'manifest.json'])).stdout.toString(),
+        ) as Map<String, dynamic>;
+        expect(crxManifest['update_url'], equals(ExtensionPackager.chromiumUpdateUrl));
 
         // Verify Firefox XPI does not contain nested .xpi archives
         expect(res.xpiPath, isNotNull);
@@ -172,7 +177,8 @@ void main() {
           configDir: '${tmpHome.path}/ff',
           policyPath: '${tmpHome.path}/nonexistent-ff-policy.json',
         );
-        expect(BrowserExtensionInstaller.isExtensionInstalledInBrowser(ffBrowser), isFalse);
+        // homeOverride: never look at the real Firefox profiles of the machine running the tests.
+        expect(BrowserExtensionInstaller.isExtensionInstalledInBrowser(ffBrowser, homeOverride: tmpHome.path), isFalse);
       } finally {
         await tmpHome.delete(recursive: true);
       }
@@ -281,7 +287,7 @@ void main() {
       }
     });
 
-    test('chrome://extensions and about:addons are only blocked when antiCheatActive is true', () async {
+    test('chrome://extensions, settings and about:addons are never blocked (even with anti-cheat)', () async {
       for (final filePath in ['chronos_extension/background.js', 'chronos_extension_firefox/background.js']) {
         final bgContent = File(filePath).readAsStringSync();
         expect(bgContent, contains('antiCheatActive'), reason: filePath);
@@ -378,31 +384,15 @@ async function verifyScript(filePath, urlsToCheck) {
     process.exit(1);
   }
 
+  // Browser extension/settings pages stay open even with anti-cheat on (the force-installed
+  // extension cannot be removed, and losing incognito access re-locks incognito).
   statusAntiCheat = true;
   await ctx.syncWithChronos();
   beforeNavListeners[0]({ frameId: 0, tabId: 11, url: urlsToCheck[0] });
+  tabUpdateListeners[0](11, { url: urlsToCheck[0] }, { id: 11, title: "Extensions" });
   await flushMicrotasks();
-  if (updates.length !== 1 || !updates[0].url.includes("entity=anti_tamper")) {
-    console.error("EXPECTED BLOCK WITH ANTI-CHEAT ON:", filePath, updates);
-    process.exit(1);
-  }
-
-  // Simulate instant toggle OFF without manual syncWithChronos() first (stale cached true in memory).
-  statusAntiCheat = false;
-  beforeNavListeners[0]({ frameId: 0, tabId: 12, url: urlsToCheck[0] });
-  tabUpdateListeners[0](12, { url: urlsToCheck[0] }, { id: 12, title: "Extensions" });
-  await flushMicrotasks();
-  if (updates.length !== 1) {
-    console.error("EXPECTED LIVE REFRESH UNBLOCK AFTER ANTI-CHEAT DISABLED:", filePath, updates);
-    process.exit(1);
-  }
-
-  // Re-enable without waiting for periodic timer and verify navigation re-fetches and blocks.
-  statusAntiCheat = true;
-  beforeNavListeners[0]({ frameId: 0, tabId: 13, url: urlsToCheck[0] });
-  await flushMicrotasks();
-  if (updates.length !== 2 || !updates[1].url.includes("entity=anti_tamper")) {
-    console.error("EXPECTED LIVE REFRESH BLOCK AFTER ANTI-CHEAT ENABLED:", filePath, updates);
+  if (updates.length !== 0) {
+    console.error("UNEXPECTED BLOCK WITH ANTI-CHEAT ON:", filePath, updates);
     process.exit(1);
   }
 }
@@ -420,7 +410,7 @@ async function verifyScript(filePath, urlsToCheck) {
     });
   });
 
-  group('Mandatory Install & Anti-Cheat Removal', () {
+  group('Mandatory Install & Anti-Burla Removal', () {
     test('Pending browser reports uninstalled and Aguardando Abrir/Reiniciar', () async {
       final tmpHome = await Directory.systemTemp.createTemp('chronos_pending_status_');
       try {
@@ -474,7 +464,7 @@ async function verifyScript(filePath, urlsToCheck) {
       }
     });
 
-    test('verifyAntiCheatAndUninstall enforces Anti-Cheat OFF before calling guard uninstall', () async {
+    test('verifyAntiCheatAndUninstall enforces Anti-Burla OFF before calling guard uninstall', () async {
       final tmpHome = await Directory.systemTemp.createTemp('chronos_guard_uninstall_');
       try {
         var runnerCalled = false;
@@ -522,7 +512,7 @@ async function verifyScript(filePath, urlsToCheck) {
           isFalse,
         );
 
-        // Anti-Cheat OFF -> invokes pkexec chronos-guard uninstall and cleans user browsers
+        // Anti-Burla OFF -> invokes pkexec chronos-guard uninstall and cleans user browsers
         final invokedCalls = <(String, List<String>)>[];
         final offRes = await ChronosGuardService.verifyAntiCheatAndUninstall(
           antiCheatProvider: () async => const AntiCheatStateDto(
@@ -554,7 +544,7 @@ async function verifyScript(filePath, urlsToCheck) {
       }
     });
 
-    test('verifyAndAutoRepairExtensions respects .extension_removed_by_user when Anti-Cheat is OFF and repairs when ON', () async {
+    test('verifyAndAutoRepairExtensions respects .extension_removed_by_user when Anti-Burla is OFF and repairs when ON', () async {
       final tmpHome = await Directory.systemTemp.createTemp('chronos_removal_flag_');
       try {
         await Directory('${tmpHome.path}/.config/chromium/Default').create(recursive: true);
@@ -579,7 +569,7 @@ async function verifyScript(filePath, urlsToCheck) {
         );
         expect(extJson.existsSync(), isFalse);
 
-        // Anti-Cheat OFF -> stays removed, auto-repair does not reinstall
+        // Anti-Burla OFF -> stays removed, auto-repair does not reinstall
         await BrowserExtensionInstaller.verifyAndAutoRepairExtensions(
           hasActiveSiteRules: false,
           isAntiCheatActive: false,
@@ -591,7 +581,7 @@ async function verifyScript(filePath, urlsToCheck) {
         );
         expect(extJson.existsSync(), isFalse);
 
-        // Anti-Cheat ON -> flag is cleared and mandatory install restores descriptor
+        // Anti-Burla ON -> flag is cleared and mandatory install restores descriptor
         await BrowserExtensionInstaller.verifyAndAutoRepairExtensions(
           hasActiveSiteRules: false,
           isAntiCheatActive: true,
@@ -931,8 +921,8 @@ async function verifyScript(filePath, urlsToCheck) {
       );
       final settingsDart = File('lib/widgets/general_settings_view.dart').readAsStringSync();
       expect(
-        settingsDart.indexOf('Detox Global'),
-        lessThan(settingsDart.indexOf('YouTube Focus')),
+        settingsDart.indexOf('tr.detoxGlobalTodosOsSites'),
+        lessThan(settingsDart.indexOf('tr.youtubeFocus')),
         reason: 'Detox Global must appear before YouTube Focus in general_settings_view.dart',
       );
 
@@ -1126,7 +1116,7 @@ const hud = hudPanel.create({
         success: false,
         antiCheatLocked: true,
         antiCheatActive: true,
-        message: "Anti-Cheat ativo",
+        message: "Anti-Burla ativo",
         filters: {
           ytBlockShorts: true,
           ytEducationalMode: true,
@@ -1336,8 +1326,8 @@ assert.strictEqual(eyeBtn.style.width, eyeBtn.style.height);
 const inputs = collectByTag(hostNode.shadowRoot, "INPUT");
 assert.strictEqual(
   inputs.length,
-  21,
-  "Expected 15 focus toggles + hudAlpha + hudScale + hudHideToEye + launcherEnabled + 2 launcher term inputs"
+  23,
+  "Expected 17 focus toggles + hudAlpha + hudScale + hudHideToEye + launcherEnabled + 2 launcher term inputs"
 );
 
 const alphaInput = inputs.find((i) => i.getAttribute("data-filter-key") === "hudAlpha");
@@ -1367,7 +1357,7 @@ assert.strictEqual(savedCalls.length, 3);
 assert.strictEqual(savedCalls[2].ytEducationalMode, true);
 assert.ok(appliedCalls.length >= 1);
 
-// Adding launcher tag works anytime, while Anti-Cheat blocks removal or disabling
+// Adding launcher tag works anytime, while Anti-Burla blocks removal or disabling
 const tagInput = inputs.find((i) => i.getAttribute("data-launcher-input") === "tags");
 tagInput.value = "Soulslike";
 tagInput.dispatch("keydown", { key: "Enter", preventDefault() {} });
@@ -1379,9 +1369,9 @@ rejectNextSaveWithAc = true;
 const launcherChk = inputs.find((i) => i.getAttribute("data-filter-key") === "launcherFilterEnabled");
 launcherChk.checked = false;
 launcherChk.dispatch("change", {});
-assert.strictEqual(launcherChk.checked, true, "Anti-Cheat lock must revert launcher toggle back to enabled");
+assert.strictEqual(launcherChk.checked, true, "Anti-Burla lock must revert launcher toggle back to enabled");
 const lockBanner = findByClass(panelEl, "c-ac-lock");
-assert.ok(lockBanner && !lockBanner.classList.contains("is-hidden"), "Anti-Cheat banner must become visible when locked");
+assert.ok(lockBanner && !lockBanner.classList.contains("is-hidden"), "Anti-Burla banner must become visible when locked");
 
 // Turning hudHideToEye off causes Hide button to hide completely instead of Eye
 const hideToEyeInput = inputs.find((i) => i.getAttribute("data-filter-key") === "hudHideToEye");
@@ -1629,6 +1619,67 @@ setTimeout(() => {
       final nodeRes = await Process.run('node', ['-e', launcherScript]);
       expect(nodeRes.exitCode, equals(0), reason: 'stderr: ${nodeRes.stderr}');
       expect(nodeRes.stdout.toString(), contains('LAUNCHER_DOM_OK'));
+    });
+
+    test('ChronosYoutubeTypeFilter reveals only allowed home/related cards and skips disallowed Shorts', () async {
+      final ytScript = r'''
+const assert = require("assert");
+const path = require("path");
+const core = require(path.resolve("chronos_extension/focus_filters_core.js"));
+
+function card(videoId) {
+  const attrs = {};
+  const link = { getAttribute: (k) => (k === "href" ? "/watch?v=" + videoId + "&pp=x" : null) };
+  return {
+    getAttribute: (k) => (k in attrs ? attrs[k] : null),
+    setAttribute: (k, v) => { attrs[k] = String(v); },
+    removeAttribute: (k) => { delete attrs[k]; },
+    querySelector: () => link,
+  };
+}
+const eduCard = card("EduVid12345");
+const funCard = card("FunVid12345");
+const doc = { querySelectorAll: () => [eduCard, funCard] };
+const filters = { ytShowOnlyEnabled: true, ytShowOnlyTypes: ["educacional"], ytBlockShorts: false };
+
+// CSS hides unmarked cards on home; disabled filter adds nothing
+const css = core.buildFocusCss(core.normalizeFilters(filters), "www.youtube.com", "/");
+assert.ok(css.includes('ytd-rich-item-renderer:not([data-chronos-yt-ok="1"])'));
+assert.ok(!core.buildFocusCss(core.normalizeFilters({ ytShowOnlyEnabled: true, ytShowOnlyTypes: [] }), "www.youtube.com", "/").includes("data-chronos-yt-ok"),
+  "show-only with empty list is never enabled");
+
+const f = core.createYoutubeTypeFilter();
+let requests = 0;
+const classifyItems = (items, done) => {
+  requests += 1;
+  done({ results: items.map((it) => ({ id: it.id, known: true, types: it.videoId === "EduVid12345" ? ["educacional"] : ["entretenimento"] })) });
+};
+let skips = 0;
+f.apply(filters, { document: doc, location: { hostname: "www.youtube.com", pathname: "/" }, classifyItems, skipShort: () => skips++ });
+assert.strictEqual(eduCard.getAttribute("data-chronos-yt-ok"), "1");
+assert.strictEqual(funCard.getAttribute("data-chronos-yt-ok"), null);
+assert.strictEqual(requests, 1, "one batch for unknown cards");
+f.apply(filters, { document: doc, location: { hostname: "www.youtube.com", pathname: "/" }, classifyItems, skipShort: () => skips++ });
+assert.strictEqual(requests, 1, "cached results are reused");
+
+// Shorts: disallowed is skipped once, allowed is not
+const emptyDoc = { querySelectorAll: () => [] };
+f.apply(filters, { document: emptyDoc, location: { hostname: "www.youtube.com", pathname: "/shorts/FunVid12345" }, classifyItems, skipShort: () => skips++ });
+assert.strictEqual(skips, 1);
+f.apply(filters, { document: emptyDoc, location: { hostname: "www.youtube.com", pathname: "/shorts/FunVid12345" }, classifyItems, skipShort: () => skips++ });
+assert.strictEqual(skips, 1, "same short is not skipped twice");
+f.apply(filters, { document: emptyDoc, location: { hostname: "www.youtube.com", pathname: "/shorts/EduVid12345" }, classifyItems, skipShort: () => skips++ });
+assert.strictEqual(skips, 1, "allowed short plays");
+
+// Off-YouTube or disabled: no-op
+const other = card("FunVid12345");
+f.apply({ ytShowOnlyEnabled: false, ytShowOnlyTypes: ["educacional"] }, { document: { querySelectorAll: () => [other] }, location: { hostname: "www.youtube.com", pathname: "/" }, classifyItems });
+assert.strictEqual(other.getAttribute("data-chronos-yt-ok"), null);
+console.log("YT_TYPE_FILTER_OK");
+''';
+      final nodeRes = await Process.run('node', ['-e', ytScript]);
+      expect(nodeRes.exitCode, equals(0), reason: 'stderr: ${nodeRes.stderr}\nstdout: ${nodeRes.stdout}');
+      expect(nodeRes.stdout.toString(), contains('YT_TYPE_FILTER_OK'));
     });
 
     test('ChronosLauncherDomFilter hides lutris.net search cards (.game-preview) and ignores listing links', () async {
@@ -1997,7 +2048,7 @@ setTimeout(() => {
       expect(popupNodeRes.stdout.toString(), contains('POPUP_REFORM_OK'));
     });
 
-    test('Deactivating Anti-Cheat clears antiCheatActive across SSE background & HUD', () async {
+    test('Deactivating Anti-Burla clears antiCheatActive across SSE background & HUD', () async {
       final nodeScript = r'''
 const assert = require("assert");
 const fs = require("fs");
@@ -2167,7 +2218,7 @@ hud.ensureMounted();
 assert.ok(createdShadows.length >= 1, "HUD must attach shadow DOM");
 const lockedButtons = findAllByClass({ children: createdShadows[0].children }, "c-chip-rm");
 assert.strictEqual(lockedButtons.length, 1);
-assert.strictEqual(lockedButtons[0].textContent, "\uD83D\uDD12", "Remove button must show lock when Anti-Cheat active");
+assert.strictEqual(lockedButtons[0].textContent, "\uD83D\uDD12", "Remove button must show lock when Anti-Burla active");
 lockedButtons[0].dispatchEvent({ type: "click", stopPropagation: () => {} });
 assert.strictEqual(savedCalls.length, 0, "Clicking locked chip must NOT save removal");
 
@@ -2175,7 +2226,7 @@ currentAc = false;
 hud.syncFilters(null, null, "pt-BR", false);
 const unlockedButtons = findAllByClass({ children: createdShadows[0].children }, "c-chip-rm");
 assert.strictEqual(unlockedButtons.length, 1);
-assert.strictEqual(unlockedButtons[0].textContent, "\u00D7", "Remove button must revert to × immediately when Anti-Cheat turns OFF");
+assert.strictEqual(unlockedButtons[0].textContent, "\u00D7", "Remove button must revert to × immediately when Anti-Burla turns OFF");
 unlockedButtons[0].dispatchEvent({ type: "click", stopPropagation: () => {} });
 assert.strictEqual(savedCalls.length, 1, "Clicking unlocked chip must save removal");
 assert.deepStrictEqual(savedCalls[0].launcherBlockedTags, []);

@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:chronos_app/services/chronos_daemon_service.dart';
+import 'app_profile.dart';
 import 'package:chronos_app/src/rust/api/simple.dart';
 
 class WebBlockServer {
@@ -28,7 +29,7 @@ class WebBlockServer {
 
     // If persistent chronos_proxy daemon already owns 127.0.0.1:4545, reuse it cleanly
     // instead of falling back to an unreachable ephemeral port.
-    if (port == 4545 && await ChronosDaemonService.isApiDaemonHealthy(port: port)) {
+    if (port == ChronosProfile.apiPort && await ChronosDaemonService.isApiDaemonHealthy(port: port)) {
       _port = port;
       _isRunning = true;
       if (kDebugMode) {
@@ -173,9 +174,9 @@ class WebBlockServer {
     try {
       final f = File('/tmp/chronos_active_tab.json');
       f.writeAsStringSync(jsonEncode({
-        'url': cleanUrl.contains('127.0.0.1:4545') ? '' : cleanUrl,
+        'url': cleanUrl.contains('127.0.0.1:$_port') ? '' : cleanUrl,
         'title': title.trim(),
-        'audible_url': cleanAudible.contains('127.0.0.1:4545') ? '' : cleanAudible,
+        'audible_url': cleanAudible.contains('127.0.0.1:$_port') ? '' : cleanAudible,
         'audible_title': audibleTitle.trim(),
         'timestamp_ms': DateTime.now().millisecondsSinceEpoch,
       }));
@@ -235,6 +236,8 @@ class WebBlockServer {
     ytEducationalMode: false,
     ytBlockSidebar: false,
     ytBlockComments: false,
+    ytShowOnlyEnabled: false,
+    ytShowOnlyTypes: [],
     igBlockReels: true,
     igBlockFeed: false,
     igBlockComments: false,
@@ -243,6 +246,8 @@ class WebBlockServer {
     rdBlockComments: false,
     twBlockFeed: false,
     twBlockTrends: false,
+    twBlockSensitive: false,
+    rdBlockNsfw: false,
     liBlockFeed: false,
     globalGrayscale: false,
     globalBlockNotifications: false,
@@ -333,6 +338,8 @@ class WebBlockServer {
     'ytEducationalMode': f.ytEducationalMode,
     'ytBlockSidebar': f.ytBlockSidebar,
     'ytBlockComments': f.ytBlockComments,
+    'ytShowOnlyEnabled': f.ytShowOnlyEnabled,
+    'ytShowOnlyTypes': f.ytShowOnlyTypes,
     'igBlockReels': f.igBlockReels,
     'igBlockFeed': f.igBlockFeed,
     'igBlockComments': f.igBlockComments,
@@ -341,6 +348,8 @@ class WebBlockServer {
     'rdBlockComments': f.rdBlockComments,
     'twBlockFeed': f.twBlockFeed,
     'twBlockTrends': f.twBlockTrends,
+    'twBlockSensitive': f.twBlockSensitive,
+    'rdBlockNsfw': f.rdBlockNsfw,
     'liBlockFeed': f.liBlockFeed,
     'globalGrayscale': f.globalGrayscale,
     'globalBlockNotifications': f.globalBlockNotifications,
@@ -611,6 +620,10 @@ class WebBlockServer {
             ytEducationalMode: decoded['ytEducationalMode'] is bool ? decoded['ytEducationalMode'] : current.ytEducationalMode,
             ytBlockSidebar: decoded['ytBlockSidebar'] is bool ? decoded['ytBlockSidebar'] : current.ytBlockSidebar,
             ytBlockComments: decoded['ytBlockComments'] is bool ? decoded['ytBlockComments'] : current.ytBlockComments,
+            ytShowOnlyEnabled: decoded['ytShowOnlyEnabled'] is bool ? decoded['ytShowOnlyEnabled'] : current.ytShowOnlyEnabled,
+            ytShowOnlyTypes: decoded['ytShowOnlyTypes'] is List
+                ? _parseStringListField(decoded['ytShowOnlyTypes'])
+                : current.ytShowOnlyTypes,
 
             igBlockReels: decoded['igBlockReels'] is bool ? decoded['igBlockReels'] : current.igBlockReels,
             igBlockFeed: decoded['igBlockFeed'] is bool ? decoded['igBlockFeed'] : current.igBlockFeed,
@@ -623,6 +636,9 @@ class WebBlockServer {
 
             twBlockFeed: decoded['twBlockFeed'] is bool ? decoded['twBlockFeed'] : current.twBlockFeed,
             twBlockTrends: decoded['twBlockTrends'] is bool ? decoded['twBlockTrends'] : current.twBlockTrends,
+            twBlockSensitive:
+                decoded['twBlockSensitive'] is bool ? decoded['twBlockSensitive'] : current.twBlockSensitive,
+            rdBlockNsfw: decoded['rdBlockNsfw'] is bool ? decoded['rdBlockNsfw'] : current.rdBlockNsfw,
 
             liBlockFeed: decoded['liBlockFeed'] is bool ? decoded['liBlockFeed'] : current.liBlockFeed,
 
@@ -1428,7 +1444,7 @@ class WebBlockServer {
     ${isLauncherBlock ? '''
     <div class="token-section" style="border-color: rgba(255,255,255,0.1); background: rgba(255,255,255,0.03);">
       <div class="token-text" style="color: #8b949e; margin-bottom: 0;">
-        Para liberar este conteúdo, remova a tag ou nome correspondente nas configurações de <strong>Launchers &amp; Jogos</strong> (Anti-Cheat deve estar desativado).
+        Para liberar este conteúdo, remova a tag ou nome correspondente nas configurações de <strong>Launchers &amp; Jogos</strong> (Anti-Burla deve estar desativado).
       </div>
     </div>
     ''' : (emergencyTokens > 0 ? '''

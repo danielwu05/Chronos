@@ -1,3 +1,4 @@
+import 'package:chronos_app/services/app_locale.dart';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -11,8 +12,8 @@ Future<void> checkAndPromptForUpdate(BuildContext context, {bool manual = false}
   final messenger = ScaffoldMessenger.maybeOf(context);
   if (!manual && !isReleaseBuild) return;
   if (manual && !isReleaseBuild) {
-    messenger?.showSnackBar(const SnackBar(
-      content: Text('Atualização automática só funciona na versão instalada (não em builds de desenvolvimento).'),
+    messenger?.showSnackBar(SnackBar(
+      content: Text(tr.atualizacaoAutomaticaSoFuncionaNaVersao),
     ));
     return;
   }
@@ -22,7 +23,7 @@ Future<void> checkAndPromptForUpdate(BuildContext context, {bool manual = false}
   if (!context.mounted) return;
   if (info == null) {
     if (manual) {
-      messenger?.showSnackBar(SnackBar(content: Text('O Chronos já está na versão mais recente ($appVersion).')));
+      messenger?.showSnackBar(SnackBar(content: Text(tr.oChronosJaEstaNaVersao(appVersion))));
     }
     return;
   }
@@ -52,11 +53,11 @@ class _UpdateDialogState extends State<UpdateDialog> {
   String? _warning;
 
   String _stageLabel(UpdateStage s) => switch (s) {
-        UpdateStage.downloading => 'Baixando…',
-        UpdateStage.verifying => 'Verificando assinatura…',
-        UpdateStage.installing => 'Instalando…',
-        UpdateStage.guard => 'Atualizando a proteção do sistema (pode pedir sua senha)…',
-        UpdateStage.restarting => 'Reiniciando o Chronos…',
+        UpdateStage.downloading => tr.baixando,
+        UpdateStage.verifying => tr.verificandoAssinatura,
+        UpdateStage.installing => tr.instalando,
+        UpdateStage.guard => tr.atualizandoAProtecaoDoSistemaPode,
+        UpdateStage.restarting => tr.reiniciandoOChronos,
       };
 
   Future<void> _update() async {
@@ -81,7 +82,7 @@ class _UpdateDialogState extends State<UpdateDialog> {
         final ok = await widget.service.updateGuardFrom(widget.info);
         if (!ok && mounted) {
           setState(() => _warning =
-              'A proteção do sistema (Guard) não foi atualizada agora. Você pode atualizá-la depois em Configurações.');
+              tr.aProtecaoDoSistemaGuardNao);
           await Future<void>.delayed(const Duration(seconds: 3));
         }
       }
@@ -101,14 +102,14 @@ class _UpdateDialogState extends State<UpdateDialog> {
   Widget build(BuildContext context) {
     final info = widget.info;
     return AlertDialog(
-      title: Text('Nova versão do Chronos: ${info.version}'),
+      title: Text(tr.novaVersaoDoChronosP0(info.version)),
       content: SizedBox(
         width: 460,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Você está na versão $appVersion. Deseja atualizar agora?'),
+            Text(tr.voceEstaNaVersaoP0Deseja(appVersion)),
             if (info.notes.trim().isNotEmpty) ...[
               const SizedBox(height: 12),
               ConstrainedBox(
@@ -130,7 +131,7 @@ class _UpdateDialogState extends State<UpdateDialog> {
             ],
             if (_error != null) ...[
               const SizedBox(height: 12),
-              Text('Falha na atualização: $_error', style: const TextStyle(color: Colors.redAccent)),
+              Text(tr.falhaNaAtualizacaoP0(_error ?? ""), style: const TextStyle(color: Colors.redAccent)),
             ],
           ],
         ),
@@ -138,11 +139,11 @@ class _UpdateDialogState extends State<UpdateDialog> {
       actions: [
         TextButton(
           onPressed: _running ? null : () => Navigator.of(context).pop(),
-          child: const Text('Depois'),
+          child: Text(tr.depois),
         ),
         FilledButton(
           onPressed: _running ? null : _update,
-          child: Text(_error != null ? 'Tentar novamente' : 'Atualizar agora'),
+          child: Text(_error != null ? tr.tentarNovamente : tr.atualizarAgora),
         ),
       ],
     );

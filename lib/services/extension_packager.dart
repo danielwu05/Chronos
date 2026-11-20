@@ -34,6 +34,12 @@ class PackagingResult {
 /// Firefox XPI, local Root CA fallback, and fail-open proxy PAC assets.
 class ExtensionPackager {
   static const String defaultChromeExtensionId = 'jmbcpjljbgjabggbblfajojeahficjgi';
+
+  /// Bump whenever the packaging output changes without extension source changes.
+  static const int packagingFormat = 2;
+
+  /// Self-hosted update manifest served by `chronos_proxy` (see `local_api.rs`).
+  static const String chromiumUpdateUrl = 'http://127.0.0.1:4545/extension/update.xml';
   static const String firefoxAddonId = 'chronos-focus@chronos.local';
 
   /// Finds the workspace/project root or bundled `<exe>/data/chronos_assets`
@@ -317,9 +323,10 @@ class ExtensionPackager {
         .toList()
       ..sort((a, b) => a.path.compareTo(b.path));
 
-    var hash = BigInt.parse('14695981039346656037');
-    final prime = BigInt.parse('1099511628211');
-    final mask = BigInt.parse('18446744073709551615');
+    // FNV-1a 64-bit on native ints (wrap-around multiplication); BigInt per byte was far
+    // too slow for the bundled image model (several MB).
+    var hash = -3750763034362895579; // 14695981039346656037 as signed 64-bit
+    const prime = 1099511628211;
 
     for (final file in entries) {
       final rel = file.path.substring(dir.path.length);
@@ -337,13 +344,13 @@ class ExtensionPackager {
         bodyBytes = file.readAsBytesSync();
       }
       for (final b in nameBytes) {
-        hash = ((hash ^ BigInt.from(b)) * prime) & mask;
+        hash = (hash ^ b) * prime;
       }
       for (final b in bodyBytes) {
-        hash = ((hash ^ BigInt.from(b)) * prime) & mask;
+        hash = (hash ^ b) * prime;
       }
     }
-    return hash.toRadixString(16);
+    return hash.toUnsigned(64).toRadixString(16);
   }
 
   static Future<void> _copyExtensionDir(Directory src, Directory dst) async {
@@ -481,7 +488,9 @@ class ExtensionPackager {
     final lastVersion = (meta['version'] ?? '1.0.0').toString();
     final lastDigest = (meta['chromeDigest'] ?? '').toString();
     final lastFfDigest = (meta['firefoxDigest'] ?? '').toString();
-    final curDigest = _computeDirectoryDigest(srcChromeDir);
+    // Packaging format is part of the digest: changing how packages are built (e.g. adding
+    // manifest `update_url`) must also produce a new, higher version for browsers to pick up.
+    final curDigest = '${_computeDirectoryDigest(srcChromeDir)}-f$packagingFormat';
     final srcFirefoxDir = root != null ? Directory('$root/chronos_extension_firefox') : null;
     final curFfDigest = (srcFirefoxDir != null && srcFirefoxDir.existsSync())
         ? _computeDirectoryDigest(srcFirefoxDir)
@@ -520,7 +529,12 @@ class ExtensionPackager {
 
         // Write monotonic build version and version-scoped service worker entry
         // so Chromium MV3 never executes an orphaned ScriptCache worker across upgrades.
-        final buildManifest = Map<String, dynamic>.from(srcManifest)..['version'] = buildVersion;
+        final buildManifest = Map<String, dynamic>.from(srcManifest)
+          ..['version'] = buildVersion
+          // Chromium only uses the policy update URL for the first install; later update
+          // checks use the manifest's `update_url` (without it, Chrome asks the Web Store,
+          // which never knows this extension, so it would stay on its first version forever).
+          ..['update_url'] = chromiumUpdateUrl;
         final bgFile = File('${chromeStageDir.path}/background.js');
         if (bgFile.existsSync()) {
           final swName = 'sw_${buildVersion.replaceAll('.', '_')}.js';

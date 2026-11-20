@@ -6,6 +6,8 @@
 #   update-ca <ca_crt> <pac_file>  Atualiza Root CA público e arquivo PAC e reaplica
 #   watch                          Loop do serviço systemd: restaura políticas a cada 5s
 #   status                         Exibe estado atual do serviço e navegadores protegidos
+#   protect-account <usuário> <0|1>  Modo parental: tira/devolve a conta dos grupos de
+#                                  administrador e libera via polkit só ações do dia a dia
 #   uninstall                      Remove políticas, certificado CA, polkit e serviço systemd
 
 set -euo pipefail
@@ -17,7 +19,13 @@ UPDATE_XML="$STORE/update.xml"
 CA_CERT="$STORE/chronos-proxy-ca.crt"
 PAC_FILE="$STORE/proxy.pac"
 CONF="$STORE/guard.conf"
+DNS_CONF="$STORE/dns.conf"
+PRIVATE_CONF="$STORE/private.conf"
+VAULT_BIN="/usr/local/lib/chronos/chronos_vault"
+VAULT_DIR="/var/lib/chronos/vault"
 POLICY_NAME="chronos-focus.json"
+RESOLVED_DROPIN="/etc/systemd/resolved.conf.d/90-chronos-family-dns.conf"
+NM_DROPIN="/etc/NetworkManager/conf.d/90-chronos-family-dns.conf"
 
 ARCH_CA_ANCHOR="/etc/ca-certificates/trust-source/anchors/chronos-proxy-ca.crt"
 DEBIAN_CA_ANCHOR="/usr/local/share/ca-certificates/chronos-proxy-ca.crt"
@@ -55,10 +63,82 @@ load_conf() {
   BLOCK_INCOGNITO=1
   BLOCK_GUEST=1
   PROXY_PORT="4546"
+  TARGET_USER=""
+  DB_PATH=""
   # shellcheck disable=SC1090
   [ -f "$CONF" ] && . "$CONF"
+  # User/parent choice (set-incognito) overrides the installed defaults.
+  if [ -f "$PRIVATE_CONF" ]; then
+    local _bp
+    _bp="$(sed -n 's/^BLOCK_PRIVATE=\([01]\)$/\1/p' "$PRIVATE_CONF" | tail -1)"
+    if [ -n "$_bp" ]; then BLOCK_INCOGNITO="$_bp"; BLOCK_GUEST="$_bp"; fi
+  fi
   [[ "$EXTENSION_ID" =~ ^[a-p]{32}$ ]] || die "extension id inválido em $CONF"
   [[ "$VERSION" =~ ^[0-9]+(\.[0-9]+){0,3}$ ]] || die "versão inválida em $CONF"
+}
+
+# Family DNS protection (adult content): provider + forced SafeSearch policies.
+load_dns_conf() {
+  DNS_PROVIDER="off"
+  SAFESEARCH=0
+  # shellcheck disable=SC1090
+  [ -f "$DNS_CONF" ] && . "$DNS_CONF"
+  case "$DNS_PROVIDER" in adguard|cloudflare|opendns|off) ;; *) DNS_PROVIDER="off" ;; esac
+  [ "$SAFESEARCH" = "1" ] || SAFESEARCH=0
+}
+
+# "<ipv4 list> <ipv6 list> <DoT SNI or -> <DoH URL>"
+dns_provider_info() {
+  case "$1" in
+    adguard)    echo "94.140.14.15,94.140.15.16 2a10:50c0::bad1:ff,2a10:50c0::bad2:ff family.adguard-dns.com https://family.adguard-dns.com/dns-query" ;;
+    cloudflare) echo "1.1.1.3,1.0.0.3 2606:4700:4700::1113,2606:4700:4700::1003 family.cloudflare-dns.com https://family.cloudflare-dns.com/dns-query" ;;
+    opendns)    echo "208.67.222.123,208.67.220.123 - - https://doh.familyshield.opendns.com/dns-query" ;;
+  esac
+}
+
+render_resolved_dropin() {
+  local v4 v6 sni _doh servers="" s
+  read -r v4 v6 sni _doh <<<"$(dns_provider_info "$DNS_PROVIDER")"
+  for s in ${v4//,/ } ${v6//,/ }; do
+    [ "$s" = "-" ] && continue
+    if [ "$sni" != "-" ]; then servers="$servers $s#$sni"; else servers="$servers $s"; fi
+  done
+  cat <<EOF
+# Chronos Guard: DNS família (bloqueio de conteúdo adulto). Gerenciado automaticamente.
+[Resolve]
+DNS=${servers# }
+FallbackDNS=${servers# }
+Domains=~.
+DNSOverTLS=$([ "$sni" != "-" ] && echo opportunistic || echo no)
+EOF
+}
+
+render_nm_dropin() {
+  local v4 v6 _sni _doh
+  read -r v4 v6 _sni _doh <<<"$(dns_provider_info "$DNS_PROVIDER")"
+  cat <<EOF
+# Chronos Guard: ignora o DNS da rede (DHCP) e usa o DNS família. Gerenciado automaticamente.
+[global-dns-domain-*]
+servers=${v4}$([ "$v6" != "-" ] && echo ",$v6")
+EOF
+}
+
+apply_dns() {
+  load_dns_conf
+  local changed=0
+  if [ "$DNS_PROVIDER" != "off" ]; then
+    write_if_changed "$RESOLVED_DROPIN" "$(render_resolved_dropin)" && changed=1 || true
+    write_if_changed "$NM_DROPIN" "$(render_nm_dropin)" && changed=1 || true
+  else
+    for f in "$RESOLVED_DROPIN" "$NM_DROPIN"; do
+      [ -f "$f" ] && rm -f "$f" && changed=1
+    done
+  fi
+  if [ "$changed" -eq 1 ]; then
+    systemctl reload NetworkManager 2>/dev/null || systemctl restart NetworkManager 2>/dev/null || true
+    systemctl restart systemd-resolved 2>/dev/null || true
+    resolvectl flush-caches 2>/dev/null || true
+  fi
 }
 
 browser_present() {
@@ -130,9 +210,25 @@ render_chromium_policy() {
     "  \"ExtensionInstallForcelist\": [\"$EXTENSION_ID;$update_url\"]"
     "  \"ExtensionSettings\": {\"$EXTENSION_ID\": {\"installation_mode\": \"force_installed\", \"update_url\": \"$update_url\"}}"
   )
-  [ "${BLOCK_INCOGNITO:-1}" -eq 1 ] && lines+=("  \"IncognitoModeAvailability\": 1")
+  if [ "${BLOCK_INCOGNITO:-1}" -eq 1 ]; then
+    lines+=("  \"IncognitoModeAvailability\": 1")
+  else
+    # Policy-installed extensions never run in incognito: route it (and normal windows)
+    # through the Chronos proxy so adult/site blocking and SafeSearch still apply.
+    # PAC over loopback HTTP (Chrome ignores file:// PAC); it falls back to DIRECT.
+    lines+=("  \"ProxySettings\": {\"ProxyMode\": \"pac_script\", \"ProxyPacUrl\": \"http://127.0.0.1:4545/proxy.pac\"}")
+  fi
   [ "${BLOCK_GUEST:-1}" -eq 1 ] && lines+=("  \"BrowserGuestModeEnabled\": false")
   lines+=("  \"QuicAllowed\": false")
+  if [ "${DNS_PROVIDER:-off}" != "off" ]; then
+    # Browser "secure DNS" would bypass the system resolver: pin it to the family DoH.
+    local _v4 _v6 _sni doh
+    read -r _v4 _v6 _sni doh <<<"$(dns_provider_info "$DNS_PROVIDER")"
+    lines+=("  \"DnsOverHttpsMode\": \"secure\"" "  \"DnsOverHttpsTemplates\": \"$doh\"")
+  fi
+  if [ "${SAFESEARCH:-0}" = "1" ]; then
+    lines+=("  \"ForceGoogleSafeSearch\": true" "  \"ForceBingSafeSearch\": 2" "  \"ForceYouTubeRestrict\": 1")
+  fi
 
   echo "{"
   local i last=$((${#lines[@]} - 1))
@@ -176,7 +272,8 @@ render_firefox_policy() {
     "ExtensionSettings": {
       "$FIREFOX_ADDON_ID": {
         "installation_mode": "force_installed",
-        "install_url": "file://$XPI"
+        "install_url": "file://${XPI_VERSIONED:-$XPI}",
+        "private_browsing": true
       }
     }
 EOF
@@ -185,6 +282,20 @@ EOF
 
   if [ "${BLOCK_INCOGNITO:-1}" -eq 1 ]; then
     blocks+=("    \"DisablePrivateBrowsing\": true")
+  fi
+
+  if [ "${DNS_PROVIDER:-off}" != "off" ]; then
+    local _v4 _v6 _sni doh
+    read -r _v4 _v6 _sni doh <<<"$(dns_provider_info "$DNS_PROVIDER")"
+    blocks+=("$(cat <<EOF
+    "DNSOverHTTPS": {
+      "Enabled": true,
+      "ProviderURL": "$doh",
+      "Fallback": false,
+      "Locked": true
+    }
+EOF
+)")
   fi
 
   if [ -f "$CA_CERT" ]; then
@@ -250,6 +361,46 @@ sync_system_ca_trust() {
   fi
 }
 
+# Firefox only reinstalls a policy add-on when its install_url changes, so the XPI is
+# published under a content-hash name (chronos-<hash>.xpi); old copies are removed.
+prepare_versioned_xpi() {
+  XPI_VERSIONED=""
+  [ -f "$XPI" ] || return 0
+  local h target f
+  h="$(sha256sum "$XPI" | cut -c1-12)"
+  target="$STORE/chronos-$h.xpi"
+  if [ ! -f "$target" ]; then
+    install -m 0644 -o root -g root "$XPI" "$target"
+  fi
+  for f in "$STORE"/chronos-*.xpi; do
+    [ -f "$f" ] && [ "$f" != "$target" ] && rm -f "$f"
+  done
+  XPI_VERSIONED="$target"
+}
+
+# Ubuntu's Firefox is a snap: it only reads /etc/firefox/policies, never /usr/local, so the
+# CA, PAC and XPI are staged there and the release policy points at those copies.
+SNAP_FF_DIR="/etc/firefox/policies"
+snap_firefox_present() {
+  [ -x /snap/bin/firefox ] || [ -d /snap/firefox ]
+}
+
+stage_snap_firefox_files() {
+  snap_firefox_present || return 1
+  mkdir -p "$SNAP_FF_DIR"
+  [ -f "$CA_CERT" ] && install -m 0644 -o root -g root "$CA_CERT" "$SNAP_FF_DIR/chronos-proxy-ca.crt"
+  [ -f "$PAC_FILE" ] && install -m 0644 -o root -g root "$PAC_FILE" "$SNAP_FF_DIR/chronos-proxy.pac"
+  if [ -n "${XPI_VERSIONED:-}" ] && [ -f "$XPI_VERSIONED" ]; then
+    local name f
+    name="$(basename "$XPI_VERSIONED")"
+    install -m 0644 -o root -g root "$XPI_VERSIONED" "$SNAP_FF_DIR/$name"
+    for f in "$SNAP_FF_DIR"/chronos-*.xpi; do
+      [ -f "$f" ] && [ "$f" != "$SNAP_FF_DIR/$name" ] && rm -f "$f"
+    done
+  fi
+  return 0
+}
+
 cmd_apply() {
   local quiet=0
   [ "${1:-}" = "--quiet" ] && quiet=1
@@ -260,14 +411,22 @@ cmd_apply() {
   write_if_changed "$UPDATE_XML" "$(render_update_xml)" && changed=1 || true
   write_if_changed "$PAC_FILE" "$(render_pac_file)" && changed=1 || true
   sync_system_ca_trust
+  apply_dns
 
+  prepare_versioned_xpi
   local chromium_json firefox_release_json firefox_fork_json
   local include_release_ext=0
   if xpi_has_mozilla_signature "$XPI"; then
     include_release_ext=1
   fi
   chromium_json="$(render_chromium_policy)"
-  firefox_release_json="$(render_firefox_policy "$include_release_ext")"
+  if stage_snap_firefox_files; then
+    local snap_xpi=""
+    [ -n "${XPI_VERSIONED:-}" ] && snap_xpi="$SNAP_FF_DIR/$(basename "$XPI_VERSIONED")"
+    firefox_release_json="$(CA_CERT="$SNAP_FF_DIR/chronos-proxy-ca.crt" PAC_FILE="$SNAP_FF_DIR/chronos-proxy.pac" XPI_VERSIONED="$snap_xpi" render_firefox_policy "$include_release_ext")"
+  else
+    firefox_release_json="$(render_firefox_policy "$include_release_ext")"
+  fi
   firefox_fork_json="$(render_firefox_policy 1)"
   cleanup_legacy_user_firefox_policies
 
@@ -333,9 +492,19 @@ cmd_update_ca() {
   cmd_apply
 }
 
+# Layered anti-cheat: the root vault mirrors/restores the user's protected state, keeps
+# the daemon/autostart alive and tracks the trusted clock (see rust/src/vault.rs).
+vault_sync() {
+  [ -x "$VAULT_BIN" ] || return 0
+  [ -n "${TARGET_USER:-}" ] && [ -n "${DB_PATH:-}" ] || return 0
+  "$VAULT_BIN" sync --user "$TARGET_USER" --db "$DB_PATH" >/dev/null 2>&1 || true
+}
+
 cmd_watch() {
   while true; do
     cmd_apply --quiet 2>/dev/null || true
+    load_conf 2>/dev/null || true
+    vault_sync
     sleep 5
   done
 }
@@ -368,6 +537,14 @@ cmd_status() {
 }
 
 assert_anti_cheat_inactive_for_uninstall() {
+  # The root vault is the trusted source (the user's database can be edited).
+  load_conf 2>/dev/null || true
+  if [ -x "$VAULT_BIN" ] && [ -n "${TARGET_USER:-}" ] && [ -f "$VAULT_DIR/$TARGET_USER/state.json" ]; then
+    if "$VAULT_BIN" status --user "$TARGET_USER" 2>/dev/null | grep -q '^anti_cheat_active=1'; then
+      die "Anti-Cheat ativo (cofre do Chronos). Conclua o desafio ou aguarde expirar."
+    fi
+    return 0
+  fi
   if command -v python3 >/dev/null 2>&1; then
     local py_err=""
     py_err="$(python3 - <<'PY' 2>/dev/null
@@ -420,12 +597,154 @@ PY
   fi
 }
 
+# set-dns <adguard|cloudflare|opendns|off> <safesearch 0|1>
+# Turning protection off (or SafeSearch off) is refused while anti-cheat is active.
+cmd_set_dns() {
+  local provider="${1:-}" safe="${2:-1}"
+  case "$provider" in adguard|cloudflare|opendns|off) ;; *) die "uso: chronos-guard set-dns <adguard|cloudflare|opendns|off> <0|1>" ;; esac
+  [ "$safe" = "0" ] || safe=1
+  load_dns_conf
+  if { [ "$DNS_PROVIDER" != "off" ] && [ "$provider" = "off" ]; } || { [ "$SAFESEARCH" = "1" ] && [ "$safe" = "0" ]; }; then
+    assert_anti_cheat_inactive_for_uninstall
+  fi
+  install -d -m 0755 "$STORE"
+  write_if_changed "$DNS_CONF" "$(printf 'DNS_PROVIDER="%s"\nSAFESEARCH=%s' "$provider" "$safe")" || true
+  cmd_apply
+}
+
+# Private/incognito + guest browsing block (user or parents choose). Turning it on is
+# passwordless; turning it off is refused while anti-cheat is active.
+cmd_set_incognito() {
+  local want="${1:-}"
+  case "$want" in 0|1) ;; *) die "uso: chronos-guard set-incognito <0|1>" ;; esac
+  load_conf
+  if [ "${BLOCK_INCOGNITO:-1}" = "1" ] && [ "$want" = "0" ]; then
+    assert_anti_cheat_inactive_for_uninstall
+  fi
+  install -d -m 0755 "$STORE"
+  write_if_changed "$PRIVATE_CONF" "BLOCK_PRIVATE=$want" || true
+  cmd_apply
+}
+
+# ---------------------------------------------------------------- parental account
+# A child account in wheel/sudo can remove the guard as root. Protecting it removes the
+# admin groups (saved for undo) and allows, through polkit, only everyday actions: Wi-Fi,
+# USB drives, printers, Bluetooth, power, time zone and installing signed packages from
+# the official repositories. Needs another admin account (the guardian's), so root access
+# is never lost; the default polkit action asks for that admin's password.
+PARENTAL_DIR="/var/lib/chronos/parental"
+PARENTAL_RULES="/etc/polkit-1/rules.d/48-chronos-parental.rules"
+ADMIN_GROUPS="wheel sudo admin"
+
+admin_members_except() {
+  local skip="$1" g u
+  for g in $ADMIN_GROUPS; do
+    for u in $(getent group "$g" | cut -d: -f4 | tr ',' ' '); do
+      [ "$u" != "$skip" ] && echo "$u"
+    done
+  done | sort -u
+}
+
+write_parental_rules() {
+  local users=() f
+  for f in "$PARENTAL_DIR"/*.groups; do
+    [ -f "$f" ] && users+=("\"$(basename "$f" .groups)\"")
+  done
+  if [ "${#users[@]}" -eq 0 ]; then
+    rm -f "$PARENTAL_RULES"
+    return 0
+  fi
+  local list
+  list="$(IFS=,; echo "${users[*]}")"
+  install -d -m 0755 /etc/polkit-1/rules.d
+  cat > "$PARENTAL_RULES" <<EOF
+// Chronos parental mode: everyday actions for protected (non-admin) accounts.
+polkit.addRule(function(action, subject) {
+  if ([$list].indexOf(subject.user) < 0 || !subject.local || !subject.active) {
+    return polkit.Result.NOT_HANDLED;
+  }
+  var id = action.id;
+  var allowed = [
+    "org.freedesktop.NetworkManager.network-control",
+    "org.freedesktop.NetworkManager.enable-disable-wifi",
+    "org.freedesktop.NetworkManager.enable-disable-network",
+    "org.freedesktop.NetworkManager.wifi.scan",
+    "org.freedesktop.NetworkManager.settings.modify.own",
+    "org.freedesktop.udisks2.filesystem-mount",
+    "org.freedesktop.udisks2.filesystem-mount-other-seat",
+    "org.freedesktop.udisks2.eject-media",
+    "org.freedesktop.udisks2.power-off-drive",
+    "org.freedesktop.login1.power-off",
+    "org.freedesktop.login1.reboot",
+    "org.freedesktop.login1.suspend",
+    "org.freedesktop.login1.hibernate",
+    "org.freedesktop.timedate1.set-timezone",
+    "org.freedesktop.packagekit.package-install",
+    "org.freedesktop.packagekit.system-update",
+    "org.freedesktop.packagekit.system-sources-refresh"
+  ];
+  if (allowed.indexOf(id) >= 0 || id.indexOf("org.opensuse.cupspkhelper.mechanism.") === 0 || id.indexOf("org.bluez.") === 0) {
+    return polkit.Result.YES;
+  }
+  return polkit.Result.NOT_HANDLED;
+});
+EOF
+  chmod 0644 "$PARENTAL_RULES"
+}
+
+cmd_protect_account() {
+  local user="${1:-}" want="${2:-}"
+  [[ "$user" =~ ^[a-z_][a-z0-9_-]*$ ]] || die "uso: chronos-guard protect-account <usuário> <0|1>"
+  case "$want" in 0|1) ;; *) die "uso: chronos-guard protect-account <usuário> <0|1>" ;; esac
+  id "$user" >/dev/null 2>&1 || die "usuário inexistente: $user"
+  [ "$user" != "root" ] || die "a conta root não pode ser protegida"
+  install -d -m 0755 "$PARENTAL_DIR"
+  local saved="$PARENTAL_DIR/$user.groups" g
+  if [ "$want" = "1" ]; then
+    [ -n "$(admin_members_except "$user")" ] || die "nenhuma outra conta de administrador. Crie a conta do responsável (com sudo) antes de proteger esta, ou o computador ficaria sem administrador."
+    local removed=""
+    for g in $ADMIN_GROUPS; do
+      if id -nG "$user" | tr ' ' '\n' | grep -qx "$g"; then
+        gpasswd -d "$user" "$g" >/dev/null && removed="$removed $g"
+      fi
+    done
+    # Re-applying keeps the groups saved the first time.
+    [ -f "$saved" ] || { printf '%s\n' "${removed# }" > "$saved"; chmod 0644 "$saved"; }
+    write_parental_rules
+    echo "chronos-guard: conta $user protegida (grupos removidos:${removed:- nenhum}). Vale no próximo login."
+  else
+    if [ -f "$saved" ]; then
+      for g in $(cat "$saved"); do
+        getent group "$g" >/dev/null && gpasswd -a "$user" "$g" >/dev/null || true
+      done
+      rm -f "$saved"
+    fi
+    write_parental_rules
+    echo "chronos-guard: proteção da conta $user removida."
+  fi
+}
+
 cmd_uninstall() {
   assert_anti_cheat_inactive_for_uninstall
+  if [ -x "$VAULT_BIN" ] && [ -n "${TARGET_USER:-}" ]; then
+    "$VAULT_BIN" uninstall --user "$TARGET_USER" || die "Anti-Cheat ativo (cofre do Chronos)."
+  fi
+  rm -rf /var/lib/chronos
+  rm -f /usr/share/polkit-1/actions/org.chronos.vault.policy
+  rm -f "$RESOLVED_DROPIN" "$NM_DROPIN" "$DNS_CONF" "$PRIVATE_CONF"
+  systemctl reload NetworkManager 2>/dev/null || true
+  systemctl restart systemd-resolved 2>/dev/null || true
   systemctl disable --now chronos-guard.service 2>/dev/null || true
   rm -f /etc/systemd/system/chronos-guard.service
   for entry in "${BROWSERS[@]}"; do rm -f "${entry%%|*}/$POLICY_NAME"; done
   for entry in "${FIREFOX_BROWSERS[@]}"; do rm -f "${entry%%|*}/policies.json"; done
+  # Give protected accounts their admin groups back (the polkit rules go away too).
+  local pf
+  for pf in "$PARENTAL_DIR"/*.groups; do
+    [ -f "$pf" ] && cmd_protect_account "$(basename "$pf" .groups)" 0 || true
+  done
+  rm -f "$PARENTAL_RULES"
+  rm -f "$SNAP_FF_DIR"/chronos-proxy-ca.crt "$SNAP_FF_DIR"/chronos-proxy.pac "$SNAP_FF_DIR"/chronos-*.xpi
   cleanup_legacy_user_firefox_policies
   rm -f "$ARCH_CA_ANCHOR" "$DEBIAN_CA_ANCHOR"
   command -v trust >/dev/null 2>&1 && trust extract-compat >/dev/null 2>&1 || true
@@ -442,8 +761,11 @@ case "${1:-}" in
   apply)      cmd_apply "${2:-}" ;;
   update-crx) cmd_update_crx "${2:-}" "${3:-}" ;;
   update-ca)  cmd_update_ca "${2:-}" "${3:-}" ;;
+  set-dns)    cmd_set_dns "${2:-}" "${3:-1}" ;;
+  set-incognito) cmd_set_incognito "${2:-}" ;;
   watch)      cmd_watch ;;
   status)     cmd_status ;;
+  protect-account) cmd_protect_account "${2:-}" "${3:-}" ;;
   uninstall)  cmd_uninstall ;;
   *) echo "uso: chronos-guard {apply|update-crx <crx> <versão>|update-ca <ca.crt> <proxy.pac>|watch|status|uninstall}" >&2; exit 2 ;;
 esac

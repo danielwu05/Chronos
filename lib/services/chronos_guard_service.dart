@@ -1,8 +1,13 @@
+import 'package:chronos_app/services/app_locale.dart';
 import 'dart:io';
 
 import 'package:chronos_app/services/browser_extension_installer.dart';
 import 'package:chronos_app/services/extension_packager.dart';
+import 'package:path_provider/path_provider.dart';
+
+import 'app_profile.dart';
 import 'package:chronos_app/src/rust/api/simple.dart';
+import 'package:chronos_app/src/rust/api/adult.dart' show getPrivateBrowsingBlock;
 
 class ChronosGuardStatus {
   final bool isInstalled;
@@ -130,7 +135,12 @@ class ChronosGuardService {
         final binContent = File(guardBinary).readAsStringSync();
         if (!binContent.contains('chronos-focus@chronos.local') ||
             !binContent.contains('chronos-proxy-ca.crt') ||
-            !binContent.contains('xpi_has_mozilla_signature')) {
+            !binContent.contains('xpi_has_mozilla_signature') ||
+            !binContent.contains('cmd_set_incognito') ||
+            !binContent.contains('ProxyPacUrl') ||
+            !binContent.contains('prepare_versioned_xpi') ||
+            (!binContent.contains('vault_sync') && findVaultBinary() != null) ||
+            _vaultBinaryOutdated()) {
           isGuardOutdated = true;
         }
       } catch (_) {}
@@ -187,6 +197,35 @@ class ChronosGuardService {
 
   /// Packages fresh CRX3/XPI/CA/PAC artifacts and stages [stagingDir]
   /// (never copying private CA keys into staging).
+  static const String vaultBinary = '/usr/local/lib/chronos/chronos_vault';
+
+  /// `chronos_vault` shipped next to the app (release) or built in the checkout.
+  static String? findVaultBinary({String? projectRootOverride}) {
+    final exeDir = File(Platform.resolvedExecutable).parent.path;
+    final root = projectRootOverride ?? ExtensionPackager.findProjectRoot();
+    for (final path in [
+      '$exeDir/chronos_vault',
+      if (root != null) '$root/rust/target/release/chronos_vault',
+    ]) {
+      final f = File(path);
+      if (f.existsSync() && f.lengthSync() > 0) return f.path;
+    }
+    return null;
+  }
+
+  /// Installed root vault missing or different from the one shipped with this app.
+  static bool _vaultBinaryOutdated() {
+    final shipped = findVaultBinary();
+    if (shipped == null) return false;
+    final installed = File(vaultBinary);
+    if (!installed.existsSync()) return true;
+    try {
+      return installed.lengthSync() != File(shipped).lengthSync();
+    } catch (_) {
+      return false;
+    }
+  }
+
   static Future<String> prepareStaging({
     String? stagingDirOverride,
     String? homeOverride,
@@ -218,13 +257,33 @@ class ChronosGuardService {
       await Process.run('chmod', ['0755', '$targetStaging/install-guard.sh']);
     }
 
+    var blockPrivate = true;
+    try {
+      blockPrivate = getPrivateBrowsingBlock();
+    } catch (_) {}
+    final privateFlag = blockPrivate ? 1 : 0;
+    // Layered anti-cheat: the root vault watches this user's database.
+    final vaultSrc = findVaultBinary(projectRootOverride: root);
+    if (vaultSrc != null) {
+      await File(vaultSrc).copy('$targetStaging/chronos_vault');
+      await Process.run('chmod', ['0755', '$targetStaging/chronos_vault']);
+    }
+    var dbPath = '$home/Documents/${ChronosProfile.dbFileName}';
+    if (homeOverride == null) {
+      try {
+        dbPath = '${(await getApplicationDocumentsDirectory()).path}/${ChronosProfile.dbFileName}';
+      } catch (_) {}
+    }
+    final targetUser = Platform.environment['USER'] ?? home.split('/').last;
     final confContent = '''# Configuração do Chronos Guard
 EXTENSION_ID="${pkg.extensionId}"
 FIREFOX_ADDON_ID="${ExtensionPackager.firefoxAddonId}"
 VERSION="${pkg.version}"
-BLOCK_INCOGNITO=1
-BLOCK_GUEST=1
+BLOCK_INCOGNITO=$privateFlag
+BLOCK_GUEST=$privateFlag
 PROXY_PORT="4546"
+TARGET_USER="$targetUser"
+DB_PATH="$dbPath"
 ''';
     await File('$targetStaging/guard.conf').writeAsString(confContent, flush: true);
 
@@ -268,8 +327,143 @@ PROXY_PORT="4546"
     }
   }
 
+  static const String familyDnsConf = '/usr/local/share/chronos/dns.conf';
+
+  /// Family DNS currently applied by the guard: (provider or 'off', safeSearch).
+  static ({String provider, bool safeSearch}) appliedFamilyDns() {
+    try {
+      final text = File(familyDnsConf).readAsStringSync();
+      final provider = RegExp(r'DNS_PROVIDER="?([a-z]+)"?').firstMatch(text)?.group(1) ?? 'off';
+      final safe = RegExp(r'SAFESEARCH=1').hasMatch(text);
+      return (provider: provider, safeSearch: safe);
+    } catch (_) {
+      return (provider: 'off', safeSearch: false);
+    }
+  }
+
+  static const String privateBrowsingConf = '/usr/local/share/chronos/private.conf';
+
+  /// Block state currently applied by the guard (null when the guard never received a choice).
+  static bool? appliedPrivateBrowsingBlock() {
+    try {
+      final m = RegExp(r'BLOCK_PRIVATE=([01])').firstMatch(File(privateBrowsingConf).readAsStringSync());
+      return m == null ? null : m.group(1) == '1';
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Applies the incognito/guest block in all browsers through the root guard.
+  /// Turning it on is passwordless; turning it off asks for the admin password and is
+  /// refused by the guard while anti-cheat is active. Returns null on success.
+  static Future<String?> applyPrivateBrowsingBlock(bool blocked) async {
+    if (ChronosProfile.isDev) return ChronosProfile.devUnavailableMessage;
+    if (!File(guardBinary).existsSync()) {
+      return 'Chronos Guard não instalado: ative a proteção dos navegadores antes.';
+    }
+    if (appliedPrivateBrowsingBlock() == blocked) return null;
+    // Guards installed before this option lack `set-incognito`: upgrade the guard (one
+    // admin prompt). The new guard.conf already carries the saved choice.
+    var hasCommand = false;
+    try {
+      final bin = File(guardBinary).readAsStringSync();
+      hasCommand = bin.contains('cmd_set_incognito') && bin.contains('ProxyPacUrl');
+    } catch (_) {}
+    if (!hasCommand) {
+      final up = await installViaPkexec();
+      return up.success ? null : up.message;
+    }
+    try {
+      final res = await Process.run('pkexec', [guardBinary, 'set-incognito', blocked ? '1' : '0']);
+      if (res.exitCode == 0) return null;
+      if (res.exitCode == 126) return 'Autorização cancelada.';
+      final err = res.stderr.toString().trim();
+      return err.isEmpty ? 'Falha ao aplicar (código ${res.exitCode}).' : err;
+    } catch (e) {
+      return 'Falha ao aplicar: $e';
+    }
+  }
+
+  /// Parental mode: whether this account is an administrator (wheel/sudo/admin) and
+  /// whether the guard already protects it (admin groups removed).
+  static ({bool isAdmin, bool isProtected, String user}) accountProtectionStatus() {
+    final user = Platform.environment['USER'] ?? '';
+    var isAdmin = false;
+    try {
+      final groups = Process.runSync('id', ['-nG']).stdout.toString().split(RegExp(r'\s+'));
+      isAdmin = groups.any((g) => g == 'wheel' || g == 'sudo' || g == 'admin');
+    } catch (_) {}
+    final isProtected = user.isNotEmpty && File('/var/lib/chronos/parental/$user.groups').existsSync();
+    return (isAdmin: isAdmin, isProtected: isProtected, user: user);
+  }
+
+  /// Protects (or releases) this account through the guard; asks for an administrator's
+  /// password (the guardian's). Returns null on success or an error message.
+  static Future<String?> setAccountProtection(bool protect) async {
+    if (ChronosProfile.isDev) return ChronosProfile.devUnavailableMessage;
+    if (!File(guardBinary).existsSync()) return tr.guardNaoInstaladoAtiveAProtecao;
+    final user = Platform.environment['USER'] ?? '';
+    if (user.isEmpty) return 'USER?';
+    try {
+      final bin = File(guardBinary).readAsStringSync();
+      if (!bin.contains('cmd_protect_account')) {
+        final up = await installViaPkexec();
+        if (!up.success) return up.message;
+      }
+    } catch (_) {}
+    try {
+      final res = await Process.run('pkexec', [guardBinary, 'protect-account', user, protect ? '1' : '0']);
+      if (res.exitCode == 0) return null;
+      if (res.exitCode == 126 || res.exitCode == 127) return tr.autorizacaoCancelada;
+      final err = res.stderr.toString().trim().replaceFirst('chronos-guard: ', '');
+      return err.isEmpty ? 'exit ${res.exitCode}' : err;
+    } catch (e) {
+      return '$e';
+    }
+  }
+
+  /// Applies system-wide family DNS + browser SafeSearch policies through the root guard.
+  /// Enabling/switching is passwordless (polkit); turning off asks for the admin password
+  /// and is refused by the guard while anti-cheat is active.
+  /// Returns null on success or an error message.
+  static Future<String?> applyFamilyDns({required String provider, required bool safeSearch}) async {
+    if (ChronosProfile.isDev) return ChronosProfile.devUnavailableMessage;
+    if (!File(guardBinary).existsSync()) {
+      return 'Chronos Guard não instalado: ative a proteção dos navegadores antes.';
+    }
+    final current = appliedFamilyDns();
+    if (current.provider == provider && current.safeSearch == safeSearch) return null;
+    try {
+      final res = await Process.run('pkexec', [guardBinary, 'set-dns', provider, safeSearch ? '1' : '0']);
+      if (res.exitCode == 0) return null;
+      if (res.exitCode == 126) return 'Autorização cancelada.';
+      final err = res.stderr.toString().trim();
+      return err.isEmpty ? 'Falha ao aplicar o DNS família (código ${res.exitCode}).' : err;
+    } catch (e) {
+      return 'Falha ao aplicar o DNS família: $e';
+    }
+  }
+
+  static String? _lastSignedXpiSeen;
+
+  /// A newly Mozilla-signed XPI (scripts/sign-firefox.sh) is published to Firefox
+  /// through the guard. One attempt per new file, so a failure never loops.
+  static Future<void> syncNewSignedFirefoxXpi() async {
+    if (ChronosProfile.isDev || !File(guardBinary).existsSync()) return;
+    final home = Platform.environment['HOME'] ?? '';
+    final signed = File('$home/.local/share/chronos/chronos-signed.xpi');
+    if (!signed.existsSync()) return;
+    final stamp = '${signed.lengthSync()}:${signed.lastModifiedSync().millisecondsSinceEpoch}';
+    if (stamp == _lastSignedXpiSeen) return;
+    _lastSignedXpiSeen = stamp;
+    final sys = File('/usr/local/share/chronos/chronos.xpi');
+    if (sys.existsSync() && sys.lengthSync() == signed.lengthSync()) return;
+    await trySilentCrxUpdate();
+  }
+
   /// Passwordlessly upgrades `/usr/local/share/chronos/chronos.crx` when permitted by polkit.
   static Future<bool> trySilentCrxUpdate() async {
+    if (ChronosProfile.isDev) return false;
     if (Platform.environment.containsKey('FLUTTER_TEST')) return false;
     if (!File(guardBinary).existsSync()) return false;
 
@@ -283,8 +477,15 @@ PROXY_PORT="4546"
     if (confFile.existsSync() && sysCrx.existsSync() && guardSrc.existsSync()) {
       try {
         final conf = confFile.readAsStringSync();
+        // The Firefox XPI is published with the CRX: a newly signed XPI alone must
+        // also trigger update-crx.
+        final sysXpi = File('/usr/local/share/chronos/chronos.xpi');
+        final guardXpi = File('${guardSrc.parent.path}/chronos.xpi');
+        final xpiUpToDate = !guardXpi.existsSync() ||
+            (sysXpi.existsSync() && sysXpi.lengthSync() == guardXpi.lengthSync());
         if (conf.contains('VERSION="${pkg.version}"') &&
-            sysCrx.lengthSync() == guardSrc.lengthSync()) {
+            sysCrx.lengthSync() == guardSrc.lengthSync() &&
+            xpiUpToDate) {
           crxUpToDate = true;
         }
       } catch (_) {}
@@ -386,6 +587,7 @@ PROXY_PORT="4546"
   }
 
   static Future<bool> launchInstallerInTerminal() async {
+    if (ChronosProfile.isDev) return false;
     await prepareStaging();
     final user = Platform.environment['USER'] ?? 'dwu';
     final shellCmd = '''
@@ -438,6 +640,7 @@ read -rp "Pressione ENTER para fechar..."
   }
 
   static Future<bool> applyPoliciesIfInstalled() async {
+    if (ChronosProfile.isDev) return false;
     if (!File(guardBinary).existsSync()) return false;
     try {
       await trySilentCrxUpdate();
@@ -459,6 +662,7 @@ read -rp "Pressione ENTER para fechar..."
     String? projectRootOverride,
     bool skipPrepareForTest = false,
   }) async {
+    if (ChronosProfile.isDev) return const ActionFeedback(success: false, message: ChronosProfile.devUnavailableMessage);
     final targetStaging = skipPrepareForTest
         ? (stagingDirOverride ?? stagingDir)
         : await prepareStaging(
@@ -592,7 +796,7 @@ read -rp "Pressione ENTER para fechar..."
     );
   }
 
-  /// Verifies Anti-Cheat is inactive before removing system-level browser policies via `chronos-guard uninstall`
+  /// Verifies Anti-Burla is inactive before removing system-level browser policies via `chronos-guard uninstall`
   /// and cleaning user-level browser extension descriptors/profiles.
   static Future<ActionFeedback> verifyAntiCheatAndUninstall({
     Future<AntiCheatStateDto> Function()? antiCheatProvider,
@@ -600,13 +804,14 @@ read -rp "Pressione ENTER para fechar..."
     bool? guardInstalledOverride,
     String? homeOverride,
   }) async {
+    if (ChronosProfile.isDev) return const ActionFeedback(success: true, message: ChronosProfile.devUnavailableMessage);
     final ac = await (antiCheatProvider ?? getAntiCheatState)();
     if (ac.isActive) {
       return ActionFeedback(
         success: false,
         message: ac.mode == 'NUKE'
             ? 'Remoção bloqueada: Modo Nuke ativo. Aguarde o tempo expirar.'
-            : 'Remoção bloqueada: Anti-Cheat ativo. Conclua o desafio antes de remover.',
+            : 'Remoção bloqueada: Anti-Burla ativo. Conclua o desafio antes de remover.',
       );
     }
 

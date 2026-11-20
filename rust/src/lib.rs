@@ -1,11 +1,24 @@
+pub mod adult;
 pub mod api;
+pub mod app_watchdog;
+pub mod conflicts;
 pub mod db;
 pub mod detector;
 pub mod engine;
+pub mod firefox_updates;
+pub mod holidays;
+pub mod i18n;
 pub mod launchers;
 pub mod local_api;
+pub mod profile;
 pub mod proxy;
 pub mod steam_api;
+pub mod trusted_time;
+pub mod vault;
+pub mod youtube;
+pub mod nsfw_net;
+pub mod screen_guard;
+pub mod wrappers;
 mod frb_generated;
 
 #[cfg(test)]
@@ -14,6 +27,35 @@ pub(crate) mod tests {
     use std::sync::Mutex;
 
     pub(crate) static TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn test_quarantine_dedupes_and_remembers_reviews() {
+        let _guard = TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let db_file = std::env::temp_dir().join(format!("chronos_quar_{}.db", std::process::id()));
+        db::init_db(db_file.to_str().unwrap()).unwrap();
+        {
+            let conn = db::get_conn().lock();
+            conn.execute("DELETE FROM install_quarantine", []).unwrap();
+            // Old scans: same AppImage, different mounts, one row per scan.
+            for (id, path, st) in [
+                ("quar_obs_1", "/tmp/.mount_Obs1aB2c/obsidian", "APPROVED"),
+                ("quar_obs_2", "/tmp/.mount_Obs9zZ8y/obsidian", "QUARANTINED"),
+                ("quar_obs_3", "/tmp/.mount_Obs7qQ6w/obsidian", "QUARANTINED"),
+            ] {
+                conn.execute(
+                    "INSERT INTO install_quarantine (request_id, app_identifier, display_name, platform, status, requested_at_utc) VALUES (?1, ?2, 'obsidian', 'linux', ?3, 0)",
+                    (id, path, st),
+                )
+                .unwrap();
+            }
+        }
+        // A scan (whatever runs on this machine) dedupes; the reviewed row is kept.
+        let items = engine::scan_system_untrusted_processes();
+        let obs: Vec<_> = items.iter().filter(|i| i.display_name == "obsidian").collect();
+        assert_eq!(obs.len(), 1);
+        assert_eq!(obs[0].status, "APPROVED");
+        let _ = std::fs::remove_file(db_file);
+    }
 
     #[test]
     fn test_db_lifecycle_and_resets() {
@@ -216,17 +258,21 @@ pub(crate) mod tests {
         assert_eq!(db::get_primary_language(), "pt-BR");
         assert!(db::set_primary_language("en-US").is_ok());
         assert_eq!(db::get_primary_language(), "en-US");
+        assert_eq!(db::normalize_primary_language("zh_TW"), "zh-Hant");
+        assert_eq!(db::normalize_primary_language("zh-Hant"), "zh-Hant");
+        assert_eq!(db::normalize_primary_language("zh_CN.UTF-8"), "zh-Hans");
+        assert_eq!(db::normalize_primary_language("zh-Hans"), "zh-Hans");
         assert_eq!(db::get_steam_language_and_country(), ("english", "US"));
         assert!(db::set_primary_language("pt-BR").is_ok());
         assert_eq!(db::get_steam_language_and_country(), ("brazilian", "BR"));
 
-        // Anti-Cheat lock: adding rules is allowed when active; removing tags/names or turning OFF is blocked
+        // Anti-Burla lock: adding rules is allowed when active; removing tags/names or turning OFF is blocked
         let mut with_extra = loaded.clone();
         with_extra.launcher_blocked_tags.push("FPS".to_string());
         with_extra.launcher_blocked_names.push("Dota 2".to_string());
         assert!(db::set_focus_filters_checked(&with_extra, true).is_ok());
 
-        // Sending "Ação" instead of "Action" under Anti-Cheat still maps to canonical "Action" and is allowed
+        // Sending "Ação" instead of "Action" under Anti-Burla still maps to canonical "Action" and is allowed
         let mut localized_equiv = db::get_focus_filters();
         localized_equiv.launcher_blocked_tags = vec![
             "Ação".to_string(),
@@ -247,7 +293,7 @@ pub(crate) mod tests {
         turn_off.launcher_filter_enabled = false;
         assert!(db::set_focus_filters_checked(&turn_off, true).is_err());
 
-        // Allowed when Anti-Cheat is inactive
+        // Allowed when Anti-Burla is inactive
         assert!(db::set_focus_filters_checked(&remove_tag, false).is_ok());
         assert!(db::set_focus_filters_checked(&turn_off, false).is_ok());
 

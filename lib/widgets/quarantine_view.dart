@@ -1,3 +1,4 @@
+import 'package:chronos_app/services/app_locale.dart';
 import 'package:flutter/material.dart';
 import 'package:chronos_app/src/rust/api/simple.dart';
 
@@ -56,7 +57,7 @@ class _QuarantineViewState extends State<QuarantineView> {
         });
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Varredura concluída. ${res.length} processos auditados/quarentenados.'),
+            content: Text(tr.varreduraConcluidaP0ProcessosAuditadosQuarentena(res.length)),
             backgroundColor: Colors.teal.shade700,
           ),
         );
@@ -108,11 +109,11 @@ class _QuarantineViewState extends State<QuarantineView> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Inspeção de Binários & Quarentena',
+                      tr.inspecaoDeBinariosQuarentena,
                       style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
                     ),
-                    const Text(
-                      'Proteção contra binários não empacotados pelo pacman ou executados fora de /usr/bin',
+                    Text(
+                      tr.protecaoContraBinariosNaoEmpacotadosPelo,
                       style: TextStyle(color: Colors.white60, fontSize: 12),
                     ),
                   ],
@@ -126,7 +127,7 @@ class _QuarantineViewState extends State<QuarantineView> {
                         child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
                       )
                     : const Icon(Icons.radar, size: 18),
-                label: const Text('Escanear Processos'),
+                label: Text(tr.escanearProcessos),
                 onPressed: _scanning ? null : _scanSystem,
               ),
             ],
@@ -142,13 +143,13 @@ class _QuarantineViewState extends State<QuarantineView> {
                   children: [
                     Icon(Icons.check_circle_outline, size: 64, color: Colors.teal.shade300),
                     const SizedBox(height: 16),
-                    const Text(
-                      'Nenhum processo não confiável em quarentena!',
+                    Text(
+                      tr.nenhumProcessoNaoConfiavelEmQuarentena,
                       style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
                     ),
                     const SizedBox(height: 6),
-                    const Text(
-                      'Clique em "Escanear Processos" para auditar binários ativos fora do sistema oficial.',
+                    Text(
+                      tr.cliqueEmEscanearProcessosParaAuditar,
                       style: TextStyle(color: Colors.white60),
                     ),
                   ],
@@ -219,12 +220,12 @@ class _QuarantineViewState extends State<QuarantineView> {
                           ),
                           if (item.status == 'QUARANTINED') ...[
                             IconButton(
-                              tooltip: 'Aprovar Binário',
+                              tooltip: tr.aprovarBinario,
                               icon: const Icon(Icons.check, color: Colors.greenAccent),
                               onPressed: () => _reviewItem(item.requestId, true),
                             ),
                             IconButton(
-                              tooltip: 'Rejeitar & Bloquear',
+                              tooltip: tr.rejeitarBloquear,
                               icon: const Icon(Icons.close, color: Colors.redAccent),
                               onPressed: () => _reviewItem(item.requestId, false),
                             ),

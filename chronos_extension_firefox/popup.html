@@ -463,7 +463,7 @@
       <input type="checkbox" id="f-yt-shorts">
     </label>
     <label class="filter-item">
-      <span>Modo Educativo (Ocultar Feed Home)</span>
+      <span>Ocultar Feed da Home</span>
       <input type="checkbox" id="f-yt-edu">
     </label>
     <label class="filter-item">
@@ -474,6 +474,12 @@
       <span>Ocultar Comentários</span>
       <input type="checkbox" id="f-yt-comments">
     </label>
+    <label class="filter-item" title="Home e relacionados mostram só os tipos marcados abaixo. A busca mostra tudo e desconta tempo.">
+      <span>Mostrar apenas os tipos abaixo</span>
+      <input type="checkbox" id="f-yt-show-only">
+    </label>
+    <div id="f-yt-types" style="display:flex;flex-wrap:wrap;gap:4px 10px;margin:0 0 2px 8px;font-size:10px;color:#c9d1d9;"></div>
+    <button type="button" id="f-yt-import-wl" style="align-self:flex-start;margin-left:8px;font-size:10px;background:#21262d;color:#c9d1d9;border:1px solid #30363d;border-radius:5px;padding:2px 8px;cursor:pointer;">Importar da Lista Branca</button>
 
     <div style="font-size:10px;font-weight:700;color:#e1306c;margin-top:4px;margin-bottom:2px;">📸 INSTAGRAM</div>
     <label class="filter-item">
@@ -504,6 +510,10 @@
       <span>Ocultar Comentários</span>
       <input type="checkbox" id="f-rd-comments">
     </label>
+    <label class="filter-item">
+      <span>Bloquear Conteúdo +18 (NSFW)</span>
+      <input type="checkbox" id="f-rd-nsfw">
+    </label>
 
     <div style="font-size:10px;font-weight:700;color:#1da1f2;margin-top:4px;margin-bottom:2px;">🐦 X (TWITTER)</div>
     <label class="filter-item">
@@ -514,6 +524,10 @@
       <span>Ocultar Assuntos do Momento</span>
       <input type="checkbox" id="f-tw-trends">
     </label>
+    <label class="filter-item">
+      <span>Bloquear Conteúdo +18 (Sensível)</span>
+      <input type="checkbox" id="f-tw-sensitive">
+    </label>
 
     <div style="font-size:10px;font-weight:700;color:#0a66c2;margin-top:4px;margin-bottom:2px;">💼 LINKEDIN</div>
     <label class="filter-item">
@@ -522,7 +536,7 @@
     </label>
 
     <div style="font-size:10px;font-weight:700;color:#ffb300;margin-top:6px;margin-bottom:2px;">🎮 LAUNCHERS & JOGOS</div>
-    <div id="launcher-ac-warning" class="ac-warn">🔒 Anti-Cheat ativo: desative para remover tags/nomes ou desligar o filtro.</div>
+    <div id="launcher-ac-warning" class="ac-warn">🔒 Anti-Burla ativo: desative para remover tags/nomes ou desligar o filtro.</div>
     <label class="filter-item">
       <span>Bloquear jogos por tag/nome (Launchers & Web)</span>
       <input type="checkbox" id="f-launcher-enabled" checked>
@@ -580,6 +594,7 @@
     <button id="sync-btn" class="sync-btn">Sincronizar</button>
   </div>
 
+  <script src="i18n.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

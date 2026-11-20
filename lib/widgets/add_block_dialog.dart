@@ -1,9 +1,12 @@
+import 'package:chronos_app/services/app_locale.dart';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:chronos_app/src/rust/api/simple.dart';
+import 'package:chronos_app/src/rust/api/youtube.dart';
+import 'package:chronos_app/src/rust/api/holidays.dart';
 
 class BlockConfigResult {
   final String entityId;
@@ -14,6 +17,8 @@ class BlockConfigResult {
   final String pattern; // JSON string {"apps": [...], "sites": [...]}
   final bool isCompletelyBlocked;
   final int? weekendQuotaSeconds;
+  /// Holiday quota (holiday > weekend > weekday); null = use the normal/weekend quota.
+  final int? holidayQuotaSeconds;
   final String? scheduleJson;
 
   BlockConfigResult({
@@ -25,6 +30,7 @@ class BlockConfigResult {
     required this.pattern,
     required this.isCompletelyBlocked,
     this.weekendQuotaSeconds,
+    this.holidayQuotaSeconds,
     this.scheduleJson,
   });
 }
@@ -110,6 +116,8 @@ class _AddBlockDialogState extends State<AddBlockDialog> {
   final Map<String, InstalledAppDto> _selectedAppObjects = {};
   final Set<String> _lockedAppIdentities = {};
   List<InstalledAppDto> _filteredGroupApps = [];
+  // Category tags are data (Portuguese names from the Rust engine); only the chip label
+  // is translated (_tagLabel).
   String _selectedTagFilter = 'Todas';
   Map<String, List<String>> _customAppTags = {}; // exec -> [tags]
 
@@ -120,11 +128,16 @@ class _AddBlockDialogState extends State<AddBlockDialog> {
   final List<String> _keywordGroupItems = [];
   String? _duplicateSiteNotice;
 
+  // Tipos de vídeo do YouTube isentos (só na Lista Branca): tipo -> teto diário em minutos (null = sem teto)
+  final Map<String, int?> _ytTypes = {};
+
   // Tempo de Tela Diário e Final de Semana (Padrão 1:00 = 60 minutos)
   int _quotaMinutes = 60;
   bool _isCompletelyBlocked = false;
   bool _customWeekendQuota = false;
   int _weekendQuotaMinutes = 180;
+  bool _customHolidayQuota = false;
+  int _holidayQuotaMinutes = 240;
 
   // Seleção de Dias e Presets
   String _daysPreset = 'ALL'; // 'ALL', 'WEEKDAYS', 'WEEKENDS', 'CUSTOM'
@@ -225,6 +238,16 @@ class _AddBlockDialogState extends State<AddBlockDialog> {
               }
             }
           }
+          if (decoded['yt_types'] is List) {
+            for (final t in decoded['yt_types']) {
+              if (t is String && t.trim().isNotEmpty) {
+                _ytTypes[t.trim()] = null;
+              } else if (t is Map && (t['type'] ?? '').toString().isNotEmpty) {
+                final cap = t['cap_minutes'];
+                _ytTypes[t['type'].toString()] = cap is int && cap > 0 ? cap : null;
+              }
+            }
+          }
         }
       } catch (_) {}
     } else if (trimmed.isNotEmpty) {
@@ -295,6 +318,14 @@ class _AddBlockDialogState extends State<AddBlockDialog> {
         _customWeekendQuota = true;
         _weekendQuotaMinutes = (r.weekendQuotaSeconds! ~/ 60).clamp(1, 1440);
       }
+      try {
+        for (final hq in getHolidayQuotas()) {
+          if (hq.entityId == r.entityId && hq.seconds > 0) {
+            _customHolidayQuota = true;
+            _holidayQuotaMinutes = (hq.seconds.toInt() ~/ 60).clamp(15, 720);
+          }
+        }
+      } catch (_) {}
 
       if (r.scheduleJson != null && r.scheduleJson!.isNotEmpty) {
         try {
@@ -377,6 +408,29 @@ class _AddBlockDialogState extends State<AddBlockDialog> {
     } catch (_) {}
   }
 
+  static const Set<String> _kAppCategories = {
+    'Jogos', 'Navegadores', 'Comunicação', 'Internet', 'Mídia', 'Desenvolvimento',
+    'Escritório', 'Gráficos', 'Educação', 'Sistema', 'Utilitários', 'Outros',
+  };
+
+  /// Display label of a category tag in the current language (custom tags as typed).
+  static String _tagLabel(String tag) => switch (tag) {
+        'Todas' => tr.todas,
+        'Jogos' => tr.jogos,
+        'Navegadores' => tr.navegadores,
+        'Comunicação' => tr.comunicacao,
+        'Internet' => tr.internet,
+        'Mídia' => tr.midia,
+        'Desenvolvimento' => tr.desenvolvimento,
+        'Escritório' => tr.escritorio,
+        'Gráficos' => tr.graficos,
+        'Educação' => tr.educacao,
+        'Sistema' => tr.sistema,
+        'Utilitários' => tr.utilitarios,
+        'Outros' => tr.outros,
+        _ => tag,
+      };
+
   List<String> _getAppTags(InstalledAppDto app) {
     final tags = <String>{};
     // Tags extraídas do arquivo .desktop (armazenadas em iconName pelo motor Rust)
@@ -386,20 +440,7 @@ class _AddBlockDialogState extends State<AddBlockDialog> {
         if (clean.isNotEmpty) tags.add(clean);
       }
     } else if (app.iconName.trim().isNotEmpty &&
-        const {
-          'Jogos',
-          'Navegadores',
-          'Comunicação',
-          'Internet',
-          'Mídia',
-          'Desenvolvimento',
-          'Escritório',
-          'Gráficos',
-          'Educação',
-          'Sistema',
-          'Utilitários',
-          'Outros',
-        }.contains(app.iconName.trim())) {
+        _kAppCategories.contains(app.iconName.trim())) {
       tags.add(app.iconName.trim());
     }
 
@@ -424,12 +465,12 @@ class _AddBlockDialogState extends State<AddBlockDialog> {
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: Text('Adicionar Tag: ${app.name}', style: const TextStyle(fontSize: 16)),
+        title: Text(tr.adicionarTagP0(app.name), style: const TextStyle(fontSize: 16)),
         content: TextField(
           controller: ctrl,
           autofocus: true,
-          decoration: const InputDecoration(
-            labelText: 'Nome da Tag (ex: Redes Sociais, Trabalho, Jogos)',
+          decoration: InputDecoration(
+            labelText: tr.nomeDaTagExRedesSociais,
             border: OutlineInputBorder(),
           ),
           onSubmitted: (val) {
@@ -448,7 +489,7 @@ class _AddBlockDialogState extends State<AddBlockDialog> {
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancelar'),
+            child: Text(tr.cancelar),
           ),
           FilledButton(
             onPressed: () {
@@ -463,7 +504,7 @@ class _AddBlockDialogState extends State<AddBlockDialog> {
               }
               Navigator.pop(ctx);
             },
-            child: const Text('Adicionar Tag'),
+            child: Text(tr.adicionarTag),
           ),
         ],
       ),
@@ -638,7 +679,7 @@ class _AddBlockDialogState extends State<AddBlockDialog> {
     if (val.isEmpty) return;
     if (_siteGroupItems.contains(val)) {
       setState(() {
-        _duplicateSiteNotice = '"$val" já foi adicionado ao grupo.';
+        _duplicateSiteNotice = tr.p0JaFoiAdicionadoAoGrupo(val);
       });
       return;
     }
@@ -667,13 +708,18 @@ class _AddBlockDialogState extends State<AddBlockDialog> {
       'apps': richApps,
       'sites': _siteGroupItems,
       if (_keywordGroupItems.isNotEmpty) 'keywords': _keywordGroupItems,
+      if (widget.isWhitelist && _ytTypes.isNotEmpty)
+        'yt_types': [
+          for (final e in _ytTypes.entries)
+            {'type': e.key, if (e.value != null && e.value! > 0) 'cap_minutes': e.value},
+        ],
     });
   }
 
   void _onUnifiedGroupContinue() {
     if (_selectedAppKeys.isEmpty && _siteGroupItems.isEmpty && _keywordGroupItems.isEmpty) return;
 
-    final name = _groupNameController.text.trim().isEmpty ? 'Sessão de Foco' : _groupNameController.text.trim();
+    final name = _groupNameController.text.trim().isEmpty ? tr.sessaoDeFoco : _groupNameController.text.trim();
     final entityId = widget.initialRule?.entityId ??
         'group_${DateTime.now().millisecondsSinceEpoch}_${name.toLowerCase().replaceAll(RegExp(r'[^a-z0-9]'), '_')}';
 
@@ -689,9 +735,9 @@ class _AddBlockDialogState extends State<AddBlockDialog> {
   }
 
   void _saveWhitelistDirectly() async {
-    if (_selectedAppKeys.isEmpty && _siteGroupItems.isEmpty && _keywordGroupItems.isEmpty) return;
+    if (_selectedAppKeys.isEmpty && _siteGroupItems.isEmpty && _keywordGroupItems.isEmpty && _ytTypes.isEmpty) return;
 
-    final name = _groupNameController.text.trim().isEmpty ? 'Lista Branca' : _groupNameController.text.trim();
+    final name = _groupNameController.text.trim().isEmpty ? tr.listaBranca : _groupNameController.text.trim();
     final itemsJson = _buildGroupPatternJson();
 
     final gId = widget.initialWhitelistGroup?.groupId ??
@@ -725,13 +771,13 @@ class _AddBlockDialogState extends State<AddBlockDialog> {
   void _saveAppsDirectly() {
     if (_selectedAppKeys.isEmpty && _siteGroupItems.isEmpty && _keywordGroupItems.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Selecione pelo menos um aplicativo ou site para o grupo.')),
+        SnackBar(content: Text(tr.selecionePeloMenosUmAplicativoOu)),
       );
       return;
     }
 
     final name = _groupNameController.text.trim().isEmpty
-        ? (_selectedName.isEmpty ? 'Sessão de Foco' : _selectedName)
+        ? (_selectedName.isEmpty ? tr.sessaoDeFoco : _selectedName)
         : _groupNameController.text.trim();
 
     final patternJson = _buildGroupPatternJson();
@@ -815,7 +861,7 @@ class _AddBlockDialogState extends State<AddBlockDialog> {
     final m = totalMinutes % 60;
     if (h == 0) return '$m minutos';
     if (m == 0) return '$h horas';
-    return '$h h $m min';
+    return tr.p0HP1Min(h, m);
   }
 
   String _formatTimeOfDay(TimeOfDay t) {
@@ -849,9 +895,18 @@ class _AddBlockDialogState extends State<AddBlockDialog> {
     }
   }
 
+  String? _todayHolidaySafe() {
+    try {
+      return getTodayHoliday();
+    } catch (_) {
+      return null;
+    }
+  }
+
   void _finish() {
     final quotaSec = _isCompletelyBlocked ? 0 : _quotaMinutes * 60;
     final weekendSec = _customWeekendQuota ? _weekendQuotaMinutes * 60 : null;
+    final holidaySec = _customHolidayQuota ? _holidayQuotaMinutes * 60 : null;
 
     final scheduleMap = <String, dynamic>{
       'preset': _daysPreset,
@@ -875,6 +930,7 @@ class _AddBlockDialogState extends State<AddBlockDialog> {
       pattern: _selectedPattern,
       isCompletelyBlocked: _isCompletelyBlocked,
       weekendQuotaSeconds: weekendSec,
+      holidayQuotaSeconds: holidaySec,
       scheduleJson: jsonEncode(scheduleMap),
     );
 
@@ -936,7 +992,8 @@ class _AddBlockDialogState extends State<AddBlockDialog> {
 
   // ETAPA 0: Configuração Unificada de Sessão de Foco (Apps + Sites)
   Widget _buildStepUnifiedGroupConfig() {
-    final totalSelected = _selectedAppKeys.length + _siteGroupItems.length;
+    final totalSelected =
+        _selectedAppKeys.length + _siteGroupItems.length + (widget.isWhitelist ? _ytTypes.length : 0);
 
     return Column(
       key: const ValueKey('step_unified_group_config'),
@@ -957,10 +1014,10 @@ class _AddBlockDialogState extends State<AddBlockDialog> {
                   Expanded(
                     child: Text(
                       widget.isWhitelist
-                          ? (widget.initialWhitelistGroup != null ? 'Editar Grupo de Lista Branca' : 'Novo Grupo de Lista Branca')
+                          ? (widget.initialWhitelistGroup != null ? tr.editarGrupoDeListaBranca : tr.novoGrupoDeListaBranca)
                           : (widget.dialogMode == BlockDialogMode.appsOnly
-                              ? 'Adicionar Aplicativos / Sites ao Grupo'
-                              : (widget.initialRule != null ? 'Editar Sessão de Foco' : 'Criar Sessão de Foco')),
+                              ? tr.adicionarAplicativosSitesAoGrupo
+                              : (widget.initialRule != null ? tr.editarSessaoDeFoco : tr.criarSessaoDeFoco)),
                       style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -976,8 +1033,8 @@ class _AddBlockDialogState extends State<AddBlockDialog> {
         ),
         if (widget.isWhitelist) ...[
           const SizedBox(height: 4),
-          const Text(
-            'Apps e sites na lista branca NUNCA serão bloqueados nem finalizados, mesmo se estiverem em outros grupos.',
+          Text(
+            tr.appsESitesNaListaBranca,
             style: TextStyle(color: Colors.white60, fontSize: 12),
           ),
         ],
@@ -986,9 +1043,9 @@ class _AddBlockDialogState extends State<AddBlockDialog> {
           controller: _groupNameController,
           decoration: InputDecoration(
             hintText: widget.isWhitelist
-                ? 'Digite o nome do grupo de lista branca (ex: Ferramentas de Estudo)...'
-                : 'Digite o nome da sessão de foco (ex: Distrações e Lazer)...',
-            labelText: widget.isWhitelist ? 'Nome do Grupo de Lista Branca' : 'Nome da Sessão de Foco',
+                ? tr.digiteONomeDoGrupoDe
+                : tr.digiteONomeDaSessaoDe,
+            labelText: widget.isWhitelist ? tr.nomeDoGrupoDeListaBranca : tr.nomeDaSessaoDeFoco,
             prefixIcon: Icon(widget.isWhitelist ? Icons.shield : Icons.label, color: Colors.tealAccent),
             filled: true,
             fillColor: Colors.teal.withValues(alpha: 0.08),
@@ -1009,7 +1066,7 @@ class _AddBlockDialogState extends State<AddBlockDialog> {
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                 ),
                 icon: const Icon(Icons.apps, size: 18),
-                label: Text('Aplicativos (${_selectedAppKeys.length})'),
+                label: Text(tr.aplicativosP0(_selectedAppKeys.length)),
                 onPressed: () => setState(() => _groupSubTab = 0),
               ),
             ),
@@ -1023,17 +1080,35 @@ class _AddBlockDialogState extends State<AddBlockDialog> {
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
                 ),
                 icon: const Icon(Icons.public, size: 18),
-                label: Text('Sites e Palavras (${_siteGroupItems.length})'),
+                label: Text(tr.sitesEPalavrasP0(_siteGroupItems.length)),
                 onPressed: () => setState(() => _groupSubTab = 1),
               ),
             ),
+            if (widget.isWhitelist) ...[
+              const SizedBox(width: 8),
+              Expanded(
+                child: ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: _groupSubTab == 2 ? Colors.red.shade700 : Colors.white10,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                  ),
+                  icon: const Icon(Icons.smart_display, size: 18),
+                  label: Text(tr.youtubeP0(_ytTypes.length)),
+                  onPressed: () => setState(() => _groupSubTab = 2),
+                ),
+              ),
+            ],
           ],
         ),
         const SizedBox(height: 10),
 
         // Conteúdo da Sub-Aba
         Expanded(
-          child: _groupSubTab == 0 ? _buildAppsSection() : _buildSitesSection(),
+          child: _groupSubTab == 0
+              ? _buildAppsSection()
+              : (_groupSubTab == 2 && widget.isWhitelist ? _buildYoutubeTypesSection() : _buildSitesSection()),
         ),
 
         const SizedBox(height: 10),
@@ -1057,7 +1132,7 @@ class _AddBlockDialogState extends State<AddBlockDialog> {
                     const SizedBox(width: 8),
                     Flexible(
                       child: Text(
-                        '${_selectedAppKeys.length} apps • ${_siteGroupItems.length} sites',
+                        tr.p0AppsP1Sites(_selectedAppKeys.length, _siteGroupItems.length),
                         style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.tealAccent),
                         overflow: TextOverflow.ellipsis,
                       ),
@@ -1079,10 +1154,10 @@ class _AddBlockDialogState extends State<AddBlockDialog> {
                 ),
                 label: Text(
                   widget.isWhitelist
-                      ? 'Salvar Lista Branca'
+                      ? tr.salvarListaBranca
                       : (widget.dialogMode == BlockDialogMode.appsOnly
-                          ? 'Salvar Apps no Grupo'
-                          : 'Avançar: Tempo de Tela & Regras'),
+                          ? tr.salvarAppsNoGrupo
+                          : tr.avancarTempoDeTelaRegras),
                 ),
                 onPressed: totalSelected == 0
                     ? null
@@ -1110,7 +1185,7 @@ class _AddBlockDialogState extends State<AddBlockDialog> {
               child: TextField(
                 controller: _groupSearchController,
                 decoration: InputDecoration(
-                  hintText: 'Buscar por nome, executável ou tag (ex: Jogos, Mídia)...',
+                  hintText: tr.buscarPorNomeExecutavelOuTag,
                   prefixIcon: const Icon(Icons.search),
                   filled: true,
                   fillColor: Colors.white.withValues(alpha: 0.05),
@@ -1122,12 +1197,12 @@ class _AddBlockDialogState extends State<AddBlockDialog> {
             const SizedBox(width: 8),
             OutlinedButton(
               onPressed: _selectAllApps,
-              child: const Text('Selecionar Tudo'),
+              child: Text(tr.selecionarTudo),
             ),
             const SizedBox(width: 4),
             OutlinedButton(
               onPressed: _deselectAllApps,
-              child: const Text('Limpar'),
+              child: Text(tr.limpar),
             ),
           ],
         ),
@@ -1144,7 +1219,7 @@ class _AddBlockDialogState extends State<AddBlockDialog> {
               final tag = availableTags[idx];
               final isSelected = _selectedTagFilter == tag;
               return ChoiceChip(
-                label: Text(tag, style: const TextStyle(fontSize: 11)),
+                label: Text(_tagLabel(tag), style: const TextStyle(fontSize: 11)),
                 selected: isSelected,
                 visualDensity: VisualDensity.compact,
                 selectedColor: Colors.purple.shade700,
@@ -1162,13 +1237,13 @@ class _AddBlockDialogState extends State<AddBlockDialog> {
 
         Expanded(
           child: _loadingApps
-              ? const Center(
+              ? Center(
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       CircularProgressIndicator(),
                       SizedBox(height: 12),
-                      Text('Carregando aplicativos instalados...', style: TextStyle(color: Colors.white70, fontSize: 13)),
+                      Text(tr.carregandoAplicativosInstalados, style: TextStyle(color: Colors.white70, fontSize: 13)),
                     ],
                   ),
                 )
@@ -1177,11 +1252,11 @@ class _AddBlockDialogState extends State<AddBlockDialog> {
                       child: Column(
                         mainAxisAlignment: MainAxisAlignment.center,
                         children: [
-                          const Text('Nenhum aplicativo encontrado para o filtro/tag.', style: TextStyle(color: Colors.white54)),
+                          Text(tr.nenhumAplicativoEncontradoParaOFiltro, style: TextStyle(color: Colors.white54)),
                           const SizedBox(height: 10),
                           FilledButton.tonalIcon(
                             icon: const Icon(Icons.refresh, size: 16),
-                            label: const Text('Limpar Filtro de Tag'),
+                            label: Text(tr.limparFiltroDeTag),
                             onPressed: () {
                               setState(() {
                                 _selectedTagFilter = 'Todas';
@@ -1229,8 +1304,8 @@ class _AddBlockDialogState extends State<AddBlockDialog> {
                                     borderRadius: BorderRadius.circular(6),
                                     border: Border.all(color: Colors.tealAccent.withValues(alpha: 0.4)),
                                   ),
-                                  child: const Text(
-                                    'Já no grupo',
+                                  child: Text(
+                                    tr.jaNoGrupo,
                                     style: TextStyle(
                                       fontSize: 10,
                                       fontWeight: FontWeight.w700,
@@ -1250,12 +1325,12 @@ class _AddBlockDialogState extends State<AddBlockDialog> {
                                     borderRadius: BorderRadius.circular(6),
                                     border: Border.all(color: Colors.white24),
                                   ),
-                                  child: const Row(
+                                  child: Row(
                                     mainAxisSize: MainAxisSize.min,
                                     children: [
                                       Icon(Icons.local_offer_outlined, size: 11, color: Colors.tealAccent),
                                       SizedBox(width: 3),
-                                      Text('+ Tag', style: TextStyle(fontSize: 10, color: Colors.tealAccent)),
+                                      Text(tr.tag, style: TextStyle(fontSize: 10, color: Colors.tealAccent)),
                                     ],
                                   ),
                                 ),
@@ -1310,6 +1385,65 @@ class _AddBlockDialogState extends State<AddBlockDialog> {
     );
   }
 
+  /// Lista Branca: tipos de vídeo do YouTube que não descontam tempo (com teto opcional).
+  Widget _buildYoutubeTypesSection() {
+    final types = getYoutubeContentTypes();
+    return ListView(
+      children: [
+        Padding(
+          padding: EdgeInsets.only(bottom: 10),
+          child: Text(
+            tr.videosDessesTiposNaoDescontamO,
+            style: TextStyle(color: Colors.white70, fontSize: 13, height: 1.4),
+          ),
+        ),
+        for (final t in types)
+          Container(
+            margin: const EdgeInsets.only(bottom: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            decoration: BoxDecoration(
+              color: Colors.white.withValues(alpha: 0.04),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: _ytTypes.containsKey(t.id) ? Colors.redAccent : Colors.white12),
+            ),
+            child: Row(
+              children: [
+                Checkbox(
+                  value: _ytTypes.containsKey(t.id),
+                  onChanged: (v) => setState(() {
+                    if (v == true) {
+                      _ytTypes[t.id] = null;
+                    } else {
+                      _ytTypes.remove(t.id);
+                    }
+                  }),
+                ),
+                Expanded(child: Text(t.label, style: const TextStyle(fontSize: 14))),
+                if (_ytTypes.containsKey(t.id))
+                  SizedBox(
+                    width: 150,
+                    child: TextFormField(
+                      key: ValueKey('cap_${t.id}'),
+                      initialValue: _ytTypes[t.id]?.toString() ?? '',
+                      keyboardType: TextInputType.number,
+                      decoration: InputDecoration(
+                        isDense: true,
+                        labelText: tr.tetoMinDia,
+                        hintText: tr.semTeto,
+                      ),
+                      onChanged: (v) {
+                        final n = int.tryParse(v.trim());
+                        setState(() => _ytTypes[t.id] = (n != null && n > 0) ? n : null);
+                      },
+                    ),
+                  ),
+              ],
+            ),
+          ),
+      ],
+    );
+  }
+
   Widget _buildSitesSection() {
     return SingleChildScrollView(
       child: Column(
@@ -1326,7 +1460,7 @@ class _AddBlockDialogState extends State<AddBlockDialog> {
                     }
                   },
                   decoration: InputDecoration(
-                    hintText: 'Digite domínio ou palavra-chave (ex: youtube.com, reels, shorts)...',
+                    hintText: tr.digiteDominioOuPalavraChaveEx,
                     prefixIcon: const Icon(Icons.add_link, color: Colors.cyanAccent),
                     filled: true,
                     fillColor: Colors.white.withValues(alpha: 0.05),
@@ -1342,7 +1476,7 @@ class _AddBlockDialogState extends State<AddBlockDialog> {
                   padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 16),
                 ),
                 icon: const Icon(Icons.add),
-                label: const Text('Adicionar'),
+                label: Text(tr.adicionar),
                 onPressed: () => _addSiteItem(_siteInputController.text),
               ),
             ],
@@ -1370,7 +1504,7 @@ class _AddBlockDialogState extends State<AddBlockDialog> {
                   children: [
                     Expanded(
                       child: Text(
-                        'Sites e Palavras-Chave Adicionados (${_siteGroupItems.length}):',
+                        tr.sitesEPalavrasChaveAdicionadosP0(_siteGroupItems.length),
                         style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Colors.blueAccent),
                         overflow: TextOverflow.ellipsis,
                       ),
@@ -1383,8 +1517,8 @@ class _AddBlockDialogState extends State<AddBlockDialog> {
                         }),
                         child: Text(
                           widget.dialogMode == BlockDialogMode.appsOnly && _lockedSiteItems.isNotEmpty
-                              ? 'Limpar Novos'
-                              : 'Limpar Todos',
+                              ? tr.limparNovos
+                              : tr.limparTodos,
                           style: const TextStyle(fontSize: 12, color: Colors.redAccent),
                         ),
                       ),
@@ -1392,9 +1526,9 @@ class _AddBlockDialogState extends State<AddBlockDialog> {
                 ),
                 const SizedBox(height: 6),
                 if (_siteGroupItems.isEmpty)
-                  const Padding(
+                  Padding(
                     padding: EdgeInsets.symmetric(vertical: 8),
-                    child: Text('Nenhum site ou palavra-chave adicionado ainda nesta sessão.',
+                    child: Text(tr.nenhumSiteOuPalavraChaveAdicionado,
                         style: TextStyle(color: Colors.white54, fontSize: 12)),
                   )
                 else
@@ -1414,7 +1548,7 @@ class _AddBlockDialogState extends State<AddBlockDialog> {
                             ? const Icon(Icons.lock_outline, size: 14, color: Colors.tealAccent)
                             : null,
                         label: Text(
-                          isLocked ? '$item (Já no grupo)' : item,
+                          isLocked ? tr.p0JaNoGrupo(item) : item,
                           style: const TextStyle(color: Colors.white, fontSize: 12),
                         ),
                         deleteIcon: isLocked
@@ -1453,8 +1587,8 @@ class _AddBlockDialogState extends State<AddBlockDialog> {
               Expanded(
                 child: Text(
                   widget.dialogMode == BlockDialogMode.timeOnly
-                      ? 'Editar Tempo de Bloqueio: $_selectedName'
-                      : 'Tempo de Tela: $_selectedName',
+                      ? tr.editarTempoDeBloqueioP0(_selectedName)
+                      : tr.tempoDeTelaP0(_selectedName),
                   style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                   overflow: TextOverflow.ellipsis,
                 ),
@@ -1479,15 +1613,15 @@ class _AddBlockDialogState extends State<AddBlockDialog> {
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Text('Sessão: $_selectedName', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                    Text(tr.sessaoP0(_selectedName), style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                       decoration: BoxDecoration(
                         color: Colors.tealAccent.withValues(alpha: 0.2),
                         borderRadius: BorderRadius.circular(6),
                       ),
-                      child: const Text(
-                        'GRUPO DE FOCO UNIFICADO',
+                      child: Text(
+                        tr.grupoDeFocoUnificado,
                         style: TextStyle(
                           color: Colors.tealAccent,
                           fontWeight: FontWeight.bold,
@@ -1499,12 +1633,12 @@ class _AddBlockDialogState extends State<AddBlockDialog> {
                 ),
                 const SizedBox(height: 6),
                 Text(
-                  '${_selectedAppKeys.length} aplicativos e ${_siteGroupItems.length} sites inclusos.',
+                  tr.p0AplicativosEP1SitesInclusos(_selectedAppKeys.length, _siteGroupItems.length),
                   style: const TextStyle(color: Colors.tealAccent, fontSize: 12, fontWeight: FontWeight.bold),
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  'Todos os aplicativos e sites desta sessão compartilham a mesma cota diária de tempo de tela.',
+                  tr.todosOsAplicativosESitesDesta,
                   style: TextStyle(color: Colors.teal.shade200, fontSize: 11),
                 ),
               ],
@@ -1512,12 +1646,12 @@ class _AddBlockDialogState extends State<AddBlockDialog> {
           ),
 
           const SizedBox(height: 18),
-          const Row(
+          Row(
             children: [
               Icon(Icons.schedule, size: 18, color: Colors.tealAccent),
               SizedBox(width: 8),
               Text(
-                'Limite de Tempo de Tela (Relógio Digital):',
+                tr.limiteDeTempoDeTelaRelogio,
                 style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
               ),
             ],
@@ -1540,7 +1674,7 @@ class _AddBlockDialogState extends State<AddBlockDialog> {
             child: Column(
               children: [
                 Text(
-                  _isCompletelyBlocked ? 'BLOQUEIO TOTAL' : _formatDigitalTime(_quotaMinutes),
+                  _isCompletelyBlocked ? tr.bloqueioTotal2 : _formatDigitalTime(_quotaMinutes),
                   style: TextStyle(
                     fontSize: _isCompletelyBlocked ? 28 : 44,
                     fontWeight: FontWeight.w900,
@@ -1551,8 +1685,8 @@ class _AddBlockDialogState extends State<AddBlockDialog> {
                 ),
                 Text(
                   _isCompletelyBlocked
-                      ? 'Nenhum acesso permitido durante o dia'
-                      : '${_formatReadableTime(_quotaMinutes)} de uso permitido',
+                      ? tr.nenhumAcessoPermitidoDuranteODia
+                      : tr.p0DeUsoPermitido(_formatReadableTime(_quotaMinutes)),
                   style: TextStyle(
                     fontSize: 12,
                     color: _isCompletelyBlocked ? Colors.red.shade200 : Colors.white70,
@@ -1614,8 +1748,8 @@ class _AddBlockDialogState extends State<AddBlockDialog> {
 
                 const SizedBox(height: 8),
                 CheckboxListTile(
-                  title: const Text('Bloquear Totalmente (0 min de tempo de tela)', style: TextStyle(fontSize: 13)),
-                  subtitle: const Text('Impede qualquer inicialização do grupo imediatamente', style: TextStyle(fontSize: 11, color: Colors.white54)),
+                  title: Text(tr.bloquearTotalmente0MinDeTempo, style: TextStyle(fontSize: 13)),
+                  subtitle: Text(tr.impedeQualquerInicializacaoDoGrupoImediatamente, style: TextStyle(fontSize: 11, color: Colors.white54)),
                   value: _isCompletelyBlocked,
                   activeColor: Colors.redAccent,
                   contentPadding: EdgeInsets.zero,
@@ -1629,8 +1763,8 @@ class _AddBlockDialogState extends State<AddBlockDialog> {
 
           // Finais de Semana Personalizados
           SwitchListTile(
-            title: const Text('Tempo de tela diferenciado no Final de Semana', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
-            subtitle: const Text('Permite configurar mais tempo para sábado e domingo', style: TextStyle(fontSize: 11, color: Colors.white54)),
+            title: Text(tr.tempoDeTelaDiferenciadoNoFinal, style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+            subtitle: Text(tr.permiteConfigurarMaisTempoParaSabado, style: TextStyle(fontSize: 11, color: Colors.white54)),
             value: _customWeekendQuota,
             activeThumbColor: Colors.tealAccent,
             contentPadding: EdgeInsets.zero,
@@ -1646,7 +1780,7 @@ class _AddBlockDialogState extends State<AddBlockDialog> {
               child: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Text('Tempo Fim de Semana: ${_formatReadableTime(_weekendQuotaMinutes)}', style: const TextStyle(fontSize: 12)),
+                  Text(tr.tempoFimDeSemanaP0(_formatReadableTime(_weekendQuotaMinutes)), style: const TextStyle(fontSize: 12)),
                   SizedBox(
                     width: 140,
                     child: Slider(
@@ -1663,26 +1797,65 @@ class _AddBlockDialogState extends State<AddBlockDialog> {
             ),
           ],
 
+          // Feriados (prioridade: feriado > fim de semana > dia útil)
+          SwitchListTile(
+            title: Text(tr.tempoDeTelaDiferenciadoEmFeriados, style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+            subtitle: Text(
+              tr.valeNosFeriadosNacionaisENas(_todayHolidaySafe() != null ? tr.hojeP0('${_todayHolidaySafe()}') : ''),
+              style: const TextStyle(fontSize: 11, color: Colors.white54),
+            ),
+            value: _customHolidayQuota,
+            activeThumbColor: Colors.orangeAccent,
+            contentPadding: EdgeInsets.zero,
+            onChanged: (val) => setState(() => _customHolidayQuota = val),
+          ),
+          if (_customHolidayQuota) ...[
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              decoration: BoxDecoration(
+                color: Colors.white.withValues(alpha: 0.05),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text(tr.tempoEmFeriadosP0(_formatReadableTime(_holidayQuotaMinutes)), style: const TextStyle(fontSize: 12)),
+                  SizedBox(
+                    width: 140,
+                    child: Slider(
+                      value: _holidayQuotaMinutes.toDouble(),
+                      min: 15,
+                      max: 720,
+                      divisions: 47,
+                      activeColor: Colors.orangeAccent,
+                      onChanged: (v) => setState(() => _holidayQuotaMinutes = v.toInt()),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+
           const SizedBox(height: 16),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text('Dias da Semana Ativos:', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+              Text(tr.diasDaSemanaAtivos, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
               Wrap(
                 spacing: 4,
                 children: [
                   ChoiceChip(
-                    label: const Text('Todos', style: TextStyle(fontSize: 10)),
+                    label: Text(tr.todos, style: TextStyle(fontSize: 10)),
                     selected: _daysPreset == 'ALL',
                     onSelected: (_) => _setPreset('ALL'),
                   ),
                   ChoiceChip(
-                    label: const Text('Dias Úteis', style: TextStyle(fontSize: 10)),
+                    label: Text(tr.diasUteis, style: TextStyle(fontSize: 10)),
                     selected: _daysPreset == 'WEEKDAYS',
                     onSelected: (_) => _setPreset('WEEKDAYS'),
                   ),
                   ChoiceChip(
-                    label: const Text('Fins de Semana', style: TextStyle(fontSize: 10)),
+                    label: Text(tr.finsDeSemana, style: TextStyle(fontSize: 10)),
                     selected: _daysPreset == 'WEEKENDS',
                     onSelected: (_) => _setPreset('WEEKENDS'),
                   ),
@@ -1695,13 +1868,13 @@ class _AddBlockDialogState extends State<AddBlockDialog> {
           // Botões de Dias Compactos e Retangulares
           Row(
             children: [
-              _buildDayRectangle(1, 'Seg'),
-              _buildDayRectangle(2, 'Ter'),
-              _buildDayRectangle(3, 'Qua'),
-              _buildDayRectangle(4, 'Qui'),
-              _buildDayRectangle(5, 'Sex'),
-              _buildDayRectangle(6, 'Sáb'),
-              _buildDayRectangle(7, 'Dom'),
+              _buildDayRectangle(1, tr.seg),
+              _buildDayRectangle(2, tr.ter),
+              _buildDayRectangle(3, tr.qua),
+              _buildDayRectangle(4, tr.qui),
+              _buildDayRectangle(5, tr.sex),
+              _buildDayRectangle(6, tr.sab),
+              _buildDayRectangle(7, tr.dom),
             ],
           ),
 
@@ -1719,8 +1892,8 @@ class _AddBlockDialogState extends State<AddBlockDialog> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 SwitchListTile(
-                  title: const Text('Bloqueio por Janela de Horário', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                  subtitle: const Text('Bloqueia o grupo dentro de um horário fixo do dia', style: TextStyle(fontSize: 11, color: Colors.white54)),
+                  title: Text(tr.bloqueioPorJanelaDeHorario, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                  subtitle: Text(tr.bloqueiaOGrupoDentroDeUm, style: TextStyle(fontSize: 11, color: Colors.white54)),
                   value: _timeWindowEnabled,
                   activeThumbColor: Colors.orangeAccent,
                   contentPadding: EdgeInsets.zero,
@@ -1734,13 +1907,13 @@ class _AddBlockDialogState extends State<AddBlockDialog> {
                     children: [
                       OutlinedButton.icon(
                         icon: const Icon(Icons.access_time, size: 16, color: Colors.orangeAccent),
-                        label: Text('Início: ${_formatTimeOfDay(_timeWindowStart)}'),
+                        label: Text(tr.inicioP0(_formatTimeOfDay(_timeWindowStart))),
                         onPressed: () => _pickTime(isStart: true),
                       ),
                       const Icon(Icons.arrow_forward, size: 16, color: Colors.white54),
                       OutlinedButton.icon(
                         icon: const Icon(Icons.access_time_filled, size: 16, color: Colors.orangeAccent),
-                        label: Text('Fim: ${_formatTimeOfDay(_timeWindowEnd)}'),
+                        label: Text(tr.fimP0(_formatTimeOfDay(_timeWindowEnd))),
                         onPressed: () => _pickTime(isStart: false),
                       ),
                     ],
@@ -1748,16 +1921,16 @@ class _AddBlockDialogState extends State<AddBlockDialog> {
                   const SizedBox(height: 8),
                   Row(
                     children: [
-                      const Text('Modo:', style: TextStyle(fontSize: 12, color: Colors.white70)),
+                      Text(tr.modo, style: TextStyle(fontSize: 12, color: Colors.white70)),
                       const SizedBox(width: 8),
                       ChoiceChip(
-                        label: const Text('Bloquear Dentro'),
+                        label: Text(tr.bloquearDentro),
                         selected: _timeWindowMode == 'BLOCK_INSIDE',
                         onSelected: (_) => setState(() => _timeWindowMode = 'BLOCK_INSIDE'),
                       ),
                       const SizedBox(width: 6),
                       ChoiceChip(
-                        label: const Text('Permitir Somente Dentro'),
+                        label: Text(tr.permitirSomenteDentro),
                         selected: _timeWindowMode == 'ALLOW_INSIDE',
                         onSelected: (_) => setState(() => _timeWindowMode = 'ALLOW_INSIDE'),
                       ),
@@ -1782,8 +1955,8 @@ class _AddBlockDialogState extends State<AddBlockDialog> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 SwitchListTile(
-                  title: const Text('Notificação por Tempo Restante', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                  subtitle: const Text('Avisa aos 15, 5 e 1 minuto restantes antes de encerrar o tempo de tela', style: TextStyle(fontSize: 11, color: Colors.white54)),
+                  title: Text(tr.notificacaoPorTempoRestante, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                  subtitle: Text(tr.avisaAos155E1, style: TextStyle(fontSize: 11, color: Colors.white54)),
                   value: _notifyRemaining,
                   activeThumbColor: Colors.tealAccent,
                   contentPadding: EdgeInsets.zero,
@@ -1797,8 +1970,8 @@ class _AddBlockDialogState extends State<AddBlockDialog> {
                 ),
                 const Divider(color: Colors.white12),
                 SwitchListTile(
-                  title: const Text('Notificação Periódica', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
-                  subtitle: const Text('Emite lembretes regulares enquanto a sessão estiver em uso', style: TextStyle(fontSize: 11, color: Colors.white54)),
+                  title: Text(tr.notificacaoPeriodica, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                  subtitle: Text(tr.emiteLembretesRegularesEnquantoASessao, style: TextStyle(fontSize: 11, color: Colors.white54)),
                   value: _notifyPeriodic,
                   activeThumbColor: Colors.tealAccent,
                   contentPadding: EdgeInsets.zero,
@@ -1812,14 +1985,14 @@ class _AddBlockDialogState extends State<AddBlockDialog> {
                 ),
                 if (_notifyPeriodic) ...[
                   const SizedBox(height: 8),
-                  const Text('Intervalo da Notificação Periódica:', style: TextStyle(color: Colors.white70, fontSize: 12)),
+                  Text(tr.intervaloDaNotificacaoPeriodica, style: TextStyle(color: Colors.white70, fontSize: 12)),
                   const SizedBox(height: 6),
                   Wrap(
                     spacing: 8,
                     runSpacing: 6,
                     children: [1, 5, 10, 15, 30, 60].map((mins) {
                       return ChoiceChip(
-                        label: Text('A cada $mins min'),
+                        label: Text(tr.aCadaP0Min(mins)),
                         selected: _notifyIntervalMins == mins,
                         onSelected: (_) => setState(() => _notifyIntervalMins = mins),
                       );
@@ -1837,8 +2010,8 @@ class _AddBlockDialogState extends State<AddBlockDialog> {
               backgroundColor: Colors.teal.shade700,
             ),
             onPressed: _finish,
-            child: const Text(
-              'Salvar Grupo de Foco',
+            child: Text(
+              tr.salvarGrupoDeFoco,
               style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
             ),
           ),

@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'app_profile.dart';
 import 'app_version.dart';
 import 'package:chronos_app/services/extension_packager.dart';
 
@@ -8,7 +9,7 @@ import 'package:chronos_app/services/extension_packager.dart';
 /// via `systemd --user` so Firefox proxy filtering, Chrome extension sync, and `/blocked`
 /// continue operating seamlessly even when the Flutter GUI window is closed.
 class ChronosDaemonService {
-  static const String serviceName = 'chronos-proxy.service';
+  static String get serviceName => ChronosProfile.daemonServiceName;
 
   static String? findPackagedProxyBinary() {
     final exeDir = File(Platform.resolvedExecutable).parent.path;
@@ -40,7 +41,7 @@ class ChronosDaemonService {
       return newest.path;
     }
 
-    final installed = File('$home/.local/share/chronos/bin/chronos_proxy');
+    final installed = File('$home/.local/share/${ChronosProfile.dataDirName}/bin/chronos_proxy');
     if (installed.existsSync() && installed.lengthSync() > 0) {
       return installed.path;
     }
@@ -48,11 +49,12 @@ class ChronosDaemonService {
   }
 
   /// Checks whether the local Chronos HTTP API daemon (`127.0.0.1:4545`) responds cleanly.
-  static Future<bool> isApiDaemonHealthy({int port = 4545}) async {
+  static Future<bool> isApiDaemonHealthy({int? port}) async {
+    final p = port ?? ChronosProfile.apiPort;
     final client = HttpClient()..connectionTimeout = const Duration(milliseconds: 350);
     try {
       final req = await client
-          .get('127.0.0.1', port, '/api/ping')
+          .get('127.0.0.1', p, '/api/ping')
           .timeout(const Duration(milliseconds: 500));
       final res = await req.close().timeout(const Duration(milliseconds: 500));
       if (res.statusCode != 200) return false;
@@ -78,6 +80,26 @@ class ChronosDaemonService {
     return true;
   }
 
+  /// Copies the image AI model (same as the extension's) next to the daemon, which
+  /// uses it for the whole-screen +18 detector.
+  static void _installNsfwModel(String home) {
+    try {
+      final root = ExtensionPackager.findProjectRoot();
+      if (root == null) return;
+      final src = Directory('$root/chronos_extension/vendor/nsfw_model');
+      if (!src.existsSync()) return;
+      final dst = Directory('$home/.local/share/${ChronosProfile.dataDirName}/model');
+      dst.createSync(recursive: true);
+      for (final f in src.listSync().whereType<File>()) {
+        final name = f.uri.pathSegments.last;
+        final out = File('${dst.path}/$name');
+        if (out.existsSync() && out.lengthSync() == f.lengthSync()) continue;
+        f.copySync('${out.path}.tmp');
+        File('${out.path}.tmp').renameSync(out.path);
+      }
+    } catch (_) {}
+  }
+
   /// Ensures `chronos_proxy` is installed under `~/.local/share/chronos/bin/` and running
   /// as a persistent `systemd --user` service (with detached process fallback).
   static Future<bool> ensureBackgroundDaemonRunning({
@@ -94,7 +116,8 @@ class ChronosDaemonService {
     }
 
     final home = homeOverride ?? Platform.environment['HOME'] ?? '/tmp';
-    final binDir = Directory('$home/.local/share/chronos/bin');
+    _installNsfwModel(home);
+    final binDir = Directory('$home/.local/share/${ChronosProfile.dataDirName}/bin');
     final installedBin = File('${binDir.path}/chronos_proxy');
     final caDir = '$home/.local/share/chronos/ca';
     await binDir.create(recursive: true);
@@ -122,7 +145,7 @@ After=default.target
 [Service]
 Type=simple
 ExecStart=${installedBin.path} --db $dbPath --ca-dir $caDir
-Restart=always
+${ChronosProfile.isDev ? 'Environment=CHRONOS_PROFILE=dev\n' : ''}Restart=always
 RestartSec=1
 
 [Install]
@@ -143,7 +166,8 @@ WantedBy=default.target
         await Process.run('systemctl', ['--user', 'daemon-reload']);
       }
       if (!isActive) {
-        await Process.run('systemctl', ['--user', 'enable', '--now', serviceName]);
+        // Dev daemon runs only while developing: started, never enabled at login.
+        await Process.run('systemctl', ['--user', ChronosProfile.isDev ? 'start' : 'enable', if (!ChronosProfile.isDev) '--now', serviceName]);
       } else if (binaryUpdated || unitChanged) {
         await Process.run('systemctl', ['--user', 'restart', serviceName]);
       }
@@ -160,6 +184,7 @@ WantedBy=default.target
         await Process.start(
           installedBin.path,
           ['--db', dbPath, '--ca-dir', caDir],
+          environment: ChronosProfile.isDev ? {'CHRONOS_PROFILE': 'dev'} : null,
           mode: ProcessStartMode.detached,
         );
         for (int i = 0; i < 15; i++) {

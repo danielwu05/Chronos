@@ -1,3 +1,4 @@
+import 'package:chronos_app/services/app_locale.dart';
 import 'package:flutter/material.dart';
 import 'package:chronos_app/src/rust/api/simple.dart';
 
@@ -34,7 +35,7 @@ class FocusOverlay extends StatelessWidget {
               ),
               const SizedBox(height: 24),
               Text(
-                'ACESSO BLOQUEADO PELO CHRONOS',
+                tr.acessoBloqueadoPeloChronos,
                 style: Theme.of(context).textTheme.headlineSmall?.copyWith(
                       color: Colors.redAccent,
                       fontWeight: FontWeight.bold,
@@ -44,7 +45,7 @@ class FocusOverlay extends StatelessWidget {
               ),
               const SizedBox(height: 12),
               Text(
-                'O tempo de tela diário para ${tick.displayName} foi completamente esgotado.',
+                tr.oTempoDeTelaDiarioPara(tick.displayName),
                 style: const TextStyle(fontSize: 16, color: Colors.white70),
                 textAlign: TextAlign.center,
               ),
@@ -64,7 +65,7 @@ class FocusOverlay extends StatelessWidget {
                         const SizedBox(width: 8),
                         Expanded(
                           child: Text(
-                            'Reprodução MPRIS pausada automaticamente.',
+                            tr.reproducaoMprisPausadaAutomaticamente,
                             style: TextStyle(color: Colors.orange.shade200, fontSize: 13),
                           ),
                         ),
@@ -77,7 +78,7 @@ class FocusOverlay extends StatelessWidget {
                         const SizedBox(width: 8),
                         Expanded(
                           child: Text(
-                            'Janela sobreposta ativa enquanto o app distrator estiver em foco.',
+                            tr.janelaSobrepostaAtivaEnquantoOApp,
                             style: TextStyle(color: Colors.orange.shade200, fontSize: 13),
                           ),
                         ),
@@ -95,7 +96,7 @@ class FocusOverlay extends StatelessWidget {
                     padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
                   ),
                   icon: const Icon(Icons.emergency_share),
-                  label: Text('Usar Token de Emergência (+1h) [${tick.emergencyTokensRemaining}/2]'),
+                  label: Text(tr.usarTokenDeEmergencia1hP0(tick.emergencyTokensRemaining)),
                   onPressed: () async {
                     final res = await consumeEmergencyToken(entityId: tick.entityId);
                     if (context.mounted) {
@@ -110,8 +111,8 @@ class FocusOverlay extends StatelessWidget {
                   },
                 ),
                 const SizedBox(height: 8),
-                const Text(
-                  'Aviso: Consumir um token de emergência bloqueia todas as atividades de lazer por 24h!',
+                Text(
+                  tr.avisoConsumirUmTokenDeEmergencia,
                   style: TextStyle(color: Colors.white38, fontSize: 11),
                   textAlign: TextAlign.center,
                 ),
@@ -122,8 +123,8 @@ class FocusOverlay extends StatelessWidget {
                     color: Colors.red.shade900.withValues(alpha: 0.3),
                     borderRadius: BorderRadius.circular(8),
                   ),
-                  child: const Text(
-                    'Nenhum Token de Emergência restante para este mês. Retorne aos seus estudos e foco!',
+                  child: Text(
+                    tr.nenhumTokenDeEmergenciaRestantePara,
                     style: TextStyle(color: Colors.white, fontSize: 12),
                     textAlign: TextAlign.center,
                   ),

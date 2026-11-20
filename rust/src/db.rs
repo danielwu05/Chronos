@@ -121,6 +121,32 @@ pub fn init_db(db_path: &str) -> Result<()> {
             source TEXT NOT NULL,
             updated_at_utc INTEGER NOT NULL
         );
+
+        -- Cache de classificação de vídeos do YouTube (categoria/canal/tipos Chronos)
+        CREATE TABLE IF NOT EXISTS yt_video_meta (
+            video_id TEXT PRIMARY KEY,
+            category TEXT NOT NULL,
+            channel_id TEXT NOT NULL,
+            channel TEXT NOT NULL,
+            keywords_json TEXT NOT NULL,
+            fetched_at_utc INTEGER NOT NULL
+        );
+
+        -- Cache de playlists do YouTube (podcast ou não)
+        CREATE TABLE IF NOT EXISTS yt_playlist_meta (
+            list_id TEXT PRIMARY KEY,
+            is_podcast INTEGER NOT NULL,
+            fetched_at_utc INTEGER NOT NULL
+        );
+
+        -- Tempo de YouTube isento pela whitelist de tipos (não desconta das regras)
+        CREATE TABLE IF NOT EXISTS yt_exempt_intervals (
+            interval_id TEXT PRIMARY KEY,
+            yt_type TEXT NOT NULL,
+            started_at_utc INTEGER NOT NULL,
+            ended_at_utc INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_yt_exempt_type_time ON yt_exempt_intervals (yt_type, started_at_utc);
         "
     )?;
 
@@ -129,6 +155,7 @@ pub fn init_db(db_path: &str) -> Result<()> {
     let _ = conn.execute("ALTER TABLE rules ADD COLUMN pattern TEXT", []);
     let _ = conn.execute("ALTER TABLE rules ADD COLUMN weekend_quota_seconds INTEGER", []);
     let _ = conn.execute("ALTER TABLE rules ADD COLUMN schedule_json TEXT", []);
+    let _ = conn.execute("ALTER TABLE yt_video_meta ADD COLUMN title TEXT NOT NULL DEFAULT ''", []);
 
     // Remove presets antigos inseridos automaticamente em versões anteriores
     let _ = conn.execute(
@@ -199,10 +226,17 @@ fn init_default_config() -> Result<()> {
     Ok(())
 }
 
+/// App language: `pt-BR` (default), `en-US`, `zh-Hans` (Simplified) or `zh-Hant` (Traditional).
 pub fn normalize_primary_language(raw: &str) -> &'static str {
-    let lower = raw.trim().to_ascii_lowercase();
+    let lower = raw.trim().to_ascii_lowercase().replace('_', "-");
     if lower.starts_with("en") {
         "en-US"
+    } else if lower.starts_with("zh") {
+        if lower.contains("hant") || lower.contains("-tw") || lower.contains("-hk") || lower.contains("-mo") {
+            "zh-Hant"
+        } else {
+            "zh-Hans"
+        }
     } else {
         "pt-BR"
     }
@@ -226,10 +260,11 @@ pub fn set_primary_language(lang: &str) -> Result<String> {
 /// Retorna o par `(language, country_code)` aceito pelos endpoints da Steam Web/Store API
 /// de acordo com o idioma principal do aplicativo (`pt-BR` -> `("brazilian", "BR")`, `en-US` -> `("english", "US")`).
 pub fn get_steam_language_and_country() -> (&'static str, &'static str) {
-    if get_primary_language().starts_with("en") {
-        ("english", "US")
-    } else {
+    // The Steam tag catalog is bilingual (English/Portuguese): Chinese uses English tags.
+    if get_primary_language() == "pt-BR" {
         ("brazilian", "BR")
+    } else {
+        ("english", "US")
     }
 }
 
@@ -823,6 +858,12 @@ pub struct FocusFilters {
     pub yt_block_sidebar: bool,
     #[serde(default)]
     pub yt_block_comments: bool,
+    /// "Mostrar apenas": home/related only show videos of `yt_show_only_types`;
+    /// disallowed Shorts are skipped. Search results stay visible (time counts).
+    #[serde(default)]
+    pub yt_show_only_enabled: bool,
+    #[serde(default)]
+    pub yt_show_only_types: Vec<String>,
 
     // Instagram
     #[serde(default = "default_true")]
@@ -841,12 +882,18 @@ pub struct FocusFilters {
     pub rd_block_feed: bool,
     #[serde(default)]
     pub rd_block_comments: bool,
+    /// Hides NSFW (+18) posts and blocks NSFW subreddits/posts.
+    #[serde(default)]
+    pub rd_block_nsfw: bool,
 
     // Twitter / X
     #[serde(default)]
     pub tw_block_feed: bool,
     #[serde(default)]
     pub tw_block_trends: bool,
+    /// Hides sensitive (+18) posts and blocks sensitive profiles on X.
+    #[serde(default)]
+    pub tw_block_sensitive: bool,
 
     // LinkedIn
     #[serde(default)]
@@ -889,6 +936,17 @@ impl FocusFilters {
         self.hud_scale = clamp_hud_scale(self.hud_scale);
         self.launcher_blocked_tags = normalize_term_list(&self.launcher_blocked_tags);
         self.launcher_blocked_names = normalize_term_list(&self.launcher_blocked_names);
+        self.yt_show_only_types = normalize_term_list(
+            &self
+                .yt_show_only_types
+                .iter()
+                .map(|t| t.trim().to_lowercase())
+                .collect::<Vec<_>>(),
+        );
+        // Never "show only nothing": enabling requires at least one type.
+        if self.yt_show_only_types.is_empty() {
+            self.yt_show_only_enabled = false;
+        }
     }
 }
 
@@ -906,6 +964,8 @@ impl Default for FocusFilters {
             yt_educational_mode: false,
             yt_block_sidebar: false,
             yt_block_comments: false,
+            yt_show_only_enabled: false,
+            yt_show_only_types: Vec::new(),
 
             ig_block_reels: true,
             ig_block_feed: false,
@@ -915,9 +975,11 @@ impl Default for FocusFilters {
 
             rd_block_feed: false,
             rd_block_comments: false,
+            rd_block_nsfw: false,
 
             tw_block_feed: false,
             tw_block_trends: false,
+            tw_block_sensitive: false,
 
             li_block_feed: false,
 
@@ -945,7 +1007,7 @@ pub fn validate_focus_filters_anti_cheat(
     }
     if current.launcher_filter_enabled && !next.launcher_filter_enabled {
         return Err(
-            "Modo Anti-Cheat está ativo! Não é possível desativar o filtro de jogos/launchers enquanto o Anti-Cheat estiver ligado."
+            "Modo Anti-Burla está ativo! Não é possível desativar o filtro de jogos/launchers enquanto o Anti-Burla estiver ligado."
                 .to_string(),
         );
     }
@@ -961,7 +1023,7 @@ pub fn validate_focus_filters_anti_cheat(
             .to_lowercase();
         if !key.is_empty() && !next_tags.contains(&key) {
             return Err(format!(
-                "Modo Anti-Cheat está ativo! A remoção da tag '{old_tag}' exige desativar o Anti-Cheat primeiro."
+                "Modo Anti-Burla está ativo! A remoção da tag '{old_tag}' exige desativar o Anti-Burla primeiro."
             ));
         }
     }
@@ -975,7 +1037,32 @@ pub fn validate_focus_filters_anti_cheat(
         let key = old_name.trim().to_lowercase();
         if !key.is_empty() && !next_names.contains(&key) {
             return Err(format!(
-                "Modo Anti-Cheat está ativo! A remoção de '{old_name}' exige desativar o Anti-Cheat primeiro."
+                "Modo Anti-Burla está ativo! A remoção de '{old_name}' exige desativar o Anti-Burla primeiro."
+            ));
+        }
+    }
+    if current.rd_block_nsfw && !next.rd_block_nsfw {
+        return Err("Modo Anti-Burla está ativo! Não é possível desligar o filtro +18 do Reddit.".to_string());
+    }
+    if current.tw_block_sensitive && !next.tw_block_sensitive {
+        return Err("Modo Anti-Burla está ativo! Não é possível desligar o filtro +18 do X/Twitter.".to_string());
+    }
+    // YouTube "mostrar apenas": tightening (removing types) is allowed, loosening is not.
+    if current.yt_show_only_enabled {
+        if !next.yt_show_only_enabled {
+            return Err(
+                "Modo Anti-Burla está ativo! Não é possível desligar o 'Mostrar apenas' do YouTube.".to_string(),
+            );
+        }
+        let allowed: std::collections::HashSet<String> =
+            current.yt_show_only_types.iter().map(|t| t.trim().to_lowercase()).collect();
+        if let Some(added) = next
+            .yt_show_only_types
+            .iter()
+            .find(|t| !allowed.contains(&t.trim().to_lowercase()))
+        {
+            return Err(format!(
+                "Modo Anti-Burla está ativo! Adicionar o tipo '{added}' ao 'Mostrar apenas' exige desativar o Anti-Burla."
             ));
         }
     }
@@ -1032,6 +1119,12 @@ pub fn set_focus_filters_checked(
     normalized.launcher_blocked_tags =
         crate::steam_api::canonicalize_tags_to_english(&normalized.launcher_blocked_tags);
     validate_focus_filters_anti_cheat(&current, &normalized, anti_cheat_active)?;
+    {
+        let before = crate::conflicts::load_current();
+        let mut after = before.clone();
+        after.show_only = normalized.yt_show_only_enabled.then(|| normalized.yt_show_only_types.clone());
+        crate::conflicts::check_new(&before, &after)?;
+    }
     if set_focus_filters(&normalized) {
         Ok(normalized)
     } else {

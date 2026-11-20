@@ -851,18 +851,64 @@ fn decode_chunked(raw: &[u8]) -> Result<Vec<u8>, String> {
     Ok(out)
 }
 
+/// Server time from the HTTPS `Date` header of `https://{host}/` (unix seconds).
+pub async fn fetch_server_date(host: &str) -> Result<i64, String> {
+    let fut = async {
+        let tcp = TcpStream::connect((host, 443u16)).await.map_err(|e| e.to_string())?;
+        let sni = ServerName::try_from(host.to_string()).map_err(|_| "invalid host".to_string())?;
+        let mut tls = tls_connector().connect(sni, tcp).await.map_err(|e| e.to_string())?;
+        let req = format!("HEAD / HTTP/1.1\r\nHost: {host}\r\nUser-Agent: ChronosFocus\r\nConnection: close\r\n\r\n");
+        tls.write_all(req.as_bytes()).await.map_err(|e| e.to_string())?;
+        tls.flush().await.map_err(|e| e.to_string())?;
+        read_raw_http_response(&mut tls).await
+    };
+    let (_status, headers, _) = tokio::time::timeout(Duration::from_secs(10), fut)
+        .await
+        .map_err(|_| "timeout".to_string())??;
+    headers
+        .iter()
+        .find(|(k, _)| k == "date")
+        .and_then(|(_, v)| crate::trusted_time::parse_http_date(v))
+        .ok_or_else(|| "no Date header".to_string())
+}
+
 pub async fn fetch_url_bytes(url: &str) -> Result<Vec<u8>, String> {
+    http_request("GET", url, &[], None).await
+}
+
+/// Minimal HTTP/1.1 client (rustls) with redirects, gzip/deflate and chunked decoding.
+/// `extra_headers` are appended verbatim; a `body` is sent with Content-Length.
+pub async fn http_request(
+    method: &str,
+    url: &str,
+    extra_headers: &[(&str, &str)],
+    body: Option<&[u8]>,
+) -> Result<Vec<u8>, String> {
     let mut current_url = url.to_string();
+    let mut method = method.to_string();
+    let mut req_body = body;
     for _ in 0..3 {
         let (is_https, host, port, path) = parse_http_url(&current_url)?;
-        let req_text = format!(
-            "GET {path} HTTP/1.1\r\n\
+        let mut req_text = format!(
+            "{method} {path} HTTP/1.1\r\n\
              Host: {host}\r\n\
              User-Agent: ChronosFocus/1.1.3\r\n\
              Accept: application/json,text/plain,*/*\r\n\
              Accept-Encoding: gzip, deflate, identity\r\n\
-             Connection: close\r\n\r\n"
+             Connection: close\r\n"
         );
+        for (k, v) in extra_headers {
+            req_text.push_str(&format!("{k}: {v}\r\n"));
+        }
+        if let Some(b) = req_body {
+            req_text.push_str(&format!("Content-Length: {}\r\n", b.len()));
+        }
+        req_text.push_str("\r\n");
+        let mut req_bytes = req_text.into_bytes();
+        if let Some(b) = req_body {
+            req_bytes.extend_from_slice(b);
+        }
+        let req_text = req_bytes;
 
         let fut = async {
             let tcp = TcpStream::connect((host.as_str(), port))
@@ -875,14 +921,14 @@ pub async fn fetch_url_bytes(url: &str) -> Result<Vec<u8>, String> {
                     .connect(sni, tcp)
                     .await
                     .map_err(|e| format!("TLS handshake {host}: {e}"))?;
-                tls.write_all(req_text.as_bytes())
+                tls.write_all(&req_text)
                     .await
                     .map_err(|e| e.to_string())?;
                 tls.flush().await.map_err(|e| e.to_string())?;
                 read_raw_http_response(&mut tls).await
             } else {
                 let mut tcp = tcp;
-                tcp.write_all(req_text.as_bytes())
+                tcp.write_all(&req_text)
                     .await
                     .map_err(|e| e.to_string())?;
                 tcp.flush().await.map_err(|e| e.to_string())?;
@@ -898,6 +944,10 @@ pub async fn fetch_url_bytes(url: &str) -> Result<Vec<u8>, String> {
             if let Some((_, loc)) = headers.iter().find(|(k, _)| k == "location") {
                 if loc.starts_with("http://") || loc.starts_with("https://") {
                     current_url = loc.clone();
+                    if status == 303 {
+                        method = "GET".to_string();
+                        req_body = None;
+                    }
                     continue;
                 }
             }

@@ -241,6 +241,8 @@ void main() {
         ytEducationalMode: true,
         ytBlockSidebar: true,
         ytBlockComments: true,
+        ytShowOnlyEnabled: false,
+        ytShowOnlyTypes: [],
         igBlockReels: true,
         igBlockFeed: true,
         igBlockComments: true,
@@ -249,6 +251,8 @@ void main() {
         rdBlockComments: true,
         twBlockFeed: true,
         twBlockTrends: true,
+        twBlockSensitive: false,
+        rdBlockNsfw: false,
         liBlockFeed: true,
         globalGrayscale: true,
         globalBlockNotifications: true,
@@ -299,6 +303,8 @@ void main() {
         ytEducationalMode: false,
         ytBlockSidebar: false,
         ytBlockComments: false,
+        ytShowOnlyEnabled: false,
+        ytShowOnlyTypes: [],
         igBlockReels: false,
         igBlockFeed: false,
         igBlockComments: false,
@@ -307,6 +313,8 @@ void main() {
         rdBlockComments: false,
         twBlockFeed: false,
         twBlockTrends: false,
+        twBlockSensitive: false,
+        rdBlockNsfw: false,
         liBlockFeed: false,
         globalGrayscale: false,
         globalBlockNotifications: false,
@@ -458,7 +466,7 @@ void main() {
 
       final analyticsView = File('lib/widgets/analytics_view.dart').readAsStringSync();
       expect(analyticsView.contains('refreshButton'), isTrue);
-      expect(analyticsView.contains('Expanded(\n                              child: Text(\n                                \'Top 5 Apps'), isTrue);
+      expect(analyticsView.contains('Expanded(\n                              child: Text(\n                                tr.top5AppsSitesMaisConsumidos'), isTrue);
     });
 
     test('Item 1: Botão de adicionar apps/sites no grupo usa ícone library_add_outlined em vez de group_add_outlined', () {

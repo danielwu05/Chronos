@@ -958,6 +958,9 @@ fn sync_lutris_service_games_in_home(home: &Path, filters: &db::FocusFilters, ru
 }
 
 pub fn sync_lutris_hidden_games() -> usize {
+    if !crate::profile::allows_system_integrations() {
+        return 0;
+    }
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
     sync_lutris_hidden_games_in_home(Path::new(&home))
 }
@@ -1336,7 +1339,7 @@ pub fn detect_and_enforce_launcher_filters_with_options(force: bool) -> Option<L
 
     // 1. Inspect running processes for SteamAppId/UMU_ID/WINEPREFIX or matching install_dir/exec
     let mut sys = System::new();
-    sys.refresh_processes(ProcessesToUpdate::All, false);
+    sys.refresh_processes(ProcessesToUpdate::All, true);
     for process in sys.processes().values() {
         let pname = process.name().to_string_lossy().to_string();
         let cmds: Vec<String> = process
@@ -1489,6 +1492,7 @@ fn find_proxy_ca_cert(home: &Path) -> Option<PathBuf> {
         home.join(".local/share/chronos/ca/chronos-proxy-ca.crt"),
         PathBuf::from("/usr/local/share/chronos/chronos-proxy-ca.crt"),
         PathBuf::from("/etc/ca-certificates/trust-source/anchors/chronos-proxy-ca.crt"),
+        PathBuf::from("/usr/local/share/ca-certificates/chronos-proxy-ca.crt"),
         home.join(".local/share/chronos/ca/chronos-ca.crt"),
     ];
     candidates.into_iter().find(|p| p.exists())
@@ -1784,10 +1788,15 @@ fn sync_system_ca_if_needed(home: &Path, ca_cert: &Path) {
     if !guard_bin.exists() {
         return;
     }
-    let sys_ca = Path::new("/etc/ca-certificates/trust-source/anchors/chronos-proxy-ca.crt");
+    // Arch (p11-kit anchors) or Debian/Ubuntu (update-ca-certificates).
     let local_bytes = std::fs::read(ca_cert).unwrap_or_default();
-    let sys_bytes = std::fs::read(sys_ca).unwrap_or_default();
-    if local_bytes.is_empty() || local_bytes == sys_bytes {
+    let installed = [
+        "/etc/ca-certificates/trust-source/anchors/chronos-proxy-ca.crt",
+        "/usr/local/share/ca-certificates/chronos-proxy-ca.crt",
+    ]
+    .iter()
+    .any(|p| std::fs::read(p).is_ok_and(|b| b == local_bytes));
+    if local_bytes.is_empty() || installed {
         return;
     }
     let expected_ca = home.join(".local/share/chronos/ca/chronos-proxy-ca.crt");
@@ -1924,6 +1933,9 @@ pub fn needs_launcher_proxy_resync_in_home(home: &Path) -> bool {
 /// Re-applies launcher proxy wrapper, NSS CA trust, Flatpak sandbox CA files,
 /// and `.desktop` overrides if launcher proxy was previously enabled.
 pub fn sync_launcher_proxy_if_configured() -> bool {
+    if !crate::profile::allows_system_integrations() {
+        return false;
+    }
     let Some(home) = std::env::var_os("HOME").map(PathBuf::from) else {
         return false;
     };
@@ -1936,6 +1948,9 @@ pub fn sync_launcher_proxy_if_configured() -> bool {
 /// Fast periodic check that re-syncs only if launcher proxy is enabled and out of date
 /// (for instance when Heroic or Lutris was installed after enabling launcher proxy).
 pub fn sync_launcher_proxy_if_needed() -> bool {
+    if !crate::profile::allows_system_integrations() {
+        return false;
+    }
     let Some(home) = std::env::var_os("HOME").map(PathBuf::from) else {
         return false;
     };
@@ -1946,6 +1961,9 @@ pub fn sync_launcher_proxy_if_needed() -> bool {
 }
 
 pub fn configure_native_launcher_proxy(enable: bool) -> Result<String, String> {
+    if !crate::profile::allows_system_integrations() {
+        return Err("Indisponível no modo dev (não altera atalhos de launchers do sistema).".to_string());
+    }
     let home_str = std::env::var("HOME").map_err(|_| "HOME not set".to_string())?;
     let home = PathBuf::from(&home_str);
     configure_native_launcher_proxy_for_home(&home, enable)
@@ -1998,6 +2016,13 @@ pub fn configure_native_launcher_proxy_for_home_with_dirs(
     // 1. Register CA in ~/.pki/nssdb + Flatpak NSS DBs + combined PEM bundle + Flatpak sandbox CA dir
     sync_system_ca_if_needed(home, &ca_cert);
     register_ca_in_nss_db_for_home(&home.join(".pki/nssdb"), &ca_cert, Some(home));
+    // Ubuntu snaps keep their own NSS DB inside ~/snap/<name>/current.
+    for snap in ["chromium", "brave", "opera", "vivaldi"] {
+        let dir = home.join("snap").join(snap);
+        if dir.is_dir() {
+            register_ca_in_nss_db_for_home(&dir.join("current/.pki/nssdb"), &ca_cert, Some(home));
+        }
+    }
     let combined_bundle = build_combined_ca_bundle(home, &ca_cert);
     let combined_path_str = combined_bundle
         .as_ref()

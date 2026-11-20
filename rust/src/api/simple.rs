@@ -9,7 +9,7 @@ use std::time::Duration;
 fn trigger_daemon_nudge() {
     crate::local_api::notify_state_changed();
     thread::spawn(|| {
-        let addr: SocketAddr = "127.0.0.1:4545".parse().unwrap();
+        let addr: SocketAddr = crate::profile::api_host().parse().unwrap();
         if let Ok(mut stream) = TcpStream::connect_timeout(&addr, Duration::from_millis(120)) {
             let _ = stream.set_write_timeout(Some(Duration::from_millis(120)));
             let _ = stream.write_all(
@@ -45,7 +45,8 @@ pub fn get_engine_status() -> EngineStatus {
 }
 
 pub fn setup_database(app_data_dir: String) -> bool {
-    let db_path = format!("{}/chronos.db", app_data_dir);
+    let db_name = if crate::profile::is_dev() { "chronos-dev.db" } else { "chronos.db" };
+    let db_path = format!("{}/{}", app_data_dir, db_name);
     let ok = db::init_db(&db_path).is_ok();
     if ok {
         crate::proxy::ensure_proxy_running();
@@ -100,11 +101,11 @@ pub fn save_onboarding_choice(
     match db::save_onboarding_choice(&app_mode, &device_role, pairing_secret.as_deref()) {
         Ok(_) => ActionFeedback {
             success: true,
-            message: "Configuração inicial concluída com sucesso!".to_string(),
+            message: crate::i18n::tr_msg(&("Configuração inicial concluída com sucesso!".to_string())),
         },
         Err(e) => ActionFeedback {
             success: false,
-            message: format!("Erro ao salvar configuração: {}", e),
+            message: crate::i18n::tr_msg(&(format!("Erro ao salvar configuração: {}", e))),
         },
     }
 }
@@ -113,15 +114,15 @@ pub fn verify_and_pair_device(code_or_password: String) -> ActionFeedback {
     match db::pair_device(&code_or_password) {
         Ok(true) => ActionFeedback {
             success: true,
-            message: "Dispositivo pareado com sucesso!".to_string(),
+            message: crate::i18n::tr_msg(&("Dispositivo pareado com sucesso!".to_string())),
         },
         Ok(false) => ActionFeedback {
             success: false,
-            message: "Código ou senha de pareamento incorretos.".to_string(),
+            message: crate::i18n::tr_msg(&("Código ou senha de pareamento incorretos.".to_string())),
         },
         Err(e) => ActionFeedback {
             success: false,
-            message: format!("Erro ao processar pareamento: {}", e),
+            message: crate::i18n::tr_msg(&(format!("Erro ao processar pareamento: {}", e))),
         },
     }
 }
@@ -130,11 +131,11 @@ pub fn reset_onboarding_state() -> ActionFeedback {
     match db::reset_onboarding_state() {
         Ok(_) => ActionFeedback {
             success: true,
-            message: "Onboarding reiniciado! A tela de configuração será exibida no próximo início.".to_string(),
+            message: crate::i18n::tr_msg(&("Onboarding reiniciado! A tela de configuração será exibida no próximo início.".to_string())),
         },
         Err(e) => ActionFeedback {
             success: false,
-            message: format!("Erro ao reiniciar onboarding: {}", e),
+            message: crate::i18n::tr_msg(&(format!("Erro ao reiniciar onboarding: {}", e))),
         },
     }
 }
@@ -184,14 +185,14 @@ pub fn start_tracking_stream(sink: StreamSink<LiveEngineTick>, entity_id: String
             if let Some(tick) = maybe_tick {
                 let event = LiveEngineTick {
                     entity_id: tick.entity_id,
-                    display_name: tick.display_name,
+                    display_name: crate::i18n::tr_msg(&tick.display_name),
                     remaining_seconds: tick.remaining_seconds,
                     daily_quota_seconds: tick.daily_quota_seconds,
                     consumed_seconds: tick.consumed_seconds,
                     is_active_now: tick.is_active_now,
                     is_background_playback: tick.is_background_playback,
                     is_blocked: tick.is_blocked,
-                    detected_activity_label: tick.detected_activity_label,
+                    detected_activity_label: crate::i18n::tr_msg(&tick.detected_activity_label),
                     ratchet_locked_until_utc: tick.ratchet_locked_until_utc,
                     emergency_tokens_remaining: tick.emergency_tokens_remaining,
                     leisure_locked_until_utc: tick.leisure_locked_until_utc,
@@ -205,7 +206,13 @@ pub fn start_tracking_stream(sink: StreamSink<LiveEngineTick>, entity_id: String
                     break;
                 }
             }
-            thread::sleep(Duration::from_secs(1));
+            // Align to the next wall-clock second so each tick sees exactly +1 s
+            // (a plain 1 s sleep drifts and the countdown occasionally drops by 2).
+            let ms = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.subsec_millis() as u64)
+                .unwrap_or(0);
+            thread::sleep(Duration::from_millis(1000 - ms + 20));
         }
     });
 }
@@ -222,7 +229,7 @@ pub fn change_quota(entity_id: String, new_quota_seconds: i64) -> ActionFeedback
     }
     ActionFeedback {
         success: res.success,
-        message: res.message,
+        message: crate::i18n::tr_msg(&(res.message)),
     }
 }
 
@@ -241,7 +248,7 @@ pub fn consume_emergency_token(entity_id: String) -> ActionFeedback {
     }
     ActionFeedback {
         success: res.success,
-        message: res.message,
+        message: crate::i18n::tr_msg(&(res.message)),
     }
 }
 
@@ -255,53 +262,81 @@ pub struct DatabaseStatsDto {
 }
 
 pub fn reset_database_full() -> ActionFeedback {
+    // Data reset tools are dev-only: in release they would reset screen time / rules.
+    if !crate::profile::is_dev() {
+        return ActionFeedback {
+            success: false,
+            message: crate::i18n::tr_msg(&("Indisponível na versão de release.".to_string())),
+        };
+    }
     match db::reset_database_full() {
         Ok(_) => ActionFeedback {
             success: true,
-            message: "Banco de dados reiniciado com sucesso! Regras e tokens restaurados.".to_string(),
+            message: crate::i18n::tr_msg(&("Banco de dados reiniciado com sucesso! Regras e tokens restaurados.".to_string())),
         },
         Err(e) => ActionFeedback {
             success: false,
-            message: format!("Erro ao reiniciar banco: {}", e),
+            message: crate::i18n::tr_msg(&(format!("Erro ao reiniciar banco: {}", e))),
         },
     }
 }
 
 pub fn reset_daily_usage(entity_id: Option<String>) -> ActionFeedback {
+    // Data reset tools are dev-only: in release they would reset screen time / rules.
+    if !crate::profile::is_dev() {
+        return ActionFeedback {
+            success: false,
+            message: crate::i18n::tr_msg(&("Indisponível na versão de release.".to_string())),
+        };
+    }
     match db::reset_daily_usage(entity_id.as_deref()) {
         Ok(_) => ActionFeedback {
             success: true,
-            message: "Consumo diário zerado com sucesso! Cota renovada.".to_string(),
+            message: crate::i18n::tr_msg(&("Consumo diário zerado com sucesso! Cota renovada.".to_string())),
         },
         Err(e) => ActionFeedback {
             success: false,
-            message: format!("Erro ao zerar consumo diário: {}", e),
+            message: crate::i18n::tr_msg(&(format!("Erro ao zerar consumo diário: {}", e))),
         },
     }
 }
 
 pub fn debug_unlock_ratchet(entity_id: String) -> ActionFeedback {
+    // Data reset tools are dev-only: in release they would reset screen time / rules.
+    if !crate::profile::is_dev() {
+        return ActionFeedback {
+            success: false,
+            message: crate::i18n::tr_msg(&("Indisponível na versão de release.".to_string())),
+        };
+    }
     match db::debug_unlock_ratchet(&entity_id) {
         Ok(_) => ActionFeedback {
             success: true,
-            message: format!("Catraca da entidade '{}' destravada com sucesso!", entity_id),
+            message: crate::i18n::tr_msg(&(format!("Catraca da entidade '{}' destravada com sucesso!", entity_id))),
         },
         Err(e) => ActionFeedback {
             success: false,
-            message: format!("Erro ao destravar catraca: {}", e),
+            message: crate::i18n::tr_msg(&(format!("Erro ao destravar catraca: {}", e))),
         },
     }
 }
 
 pub fn refill_emergency_tokens() -> ActionFeedback {
+    // Dev-only (in release it would hand out free emergency tokens).
+    if !crate::profile::is_dev() {
+        return ActionFeedback {
+            success: false,
+            message: crate::i18n::tr_msg(&("Indisponível na versão de release.".to_string())),
+        };
+    }
     match db::refill_emergency_tokens() {
         Ok(_) => ActionFeedback {
             success: true,
-            message: "Tokens de emergência restaurados para 2!".to_string(),
+            message: crate::i18n::tr_msg(&("Tokens de emergência restaurados para 2!".to_string())),
         },
         Err(e) => ActionFeedback {
             success: false,
-            message: format!("Erro ao recarregar tokens: {}", e),
+            message: crate::i18n::tr_msg(&(format!("Erro ao recarregar tokens: {}", e))),
         },
     }
 }
@@ -338,7 +373,7 @@ pub fn get_anti_cheat_state() -> AntiCheatStateDto {
         is_active: s.is_active,
         mode: s.mode,
         nuke_remaining_seconds: s.nuke_remaining_seconds,
-        challenge_text: s.challenge_text,
+        challenge_text: crate::i18n::tr_msg(&s.challenge_text),
     }
 }
 
@@ -348,16 +383,16 @@ pub fn enable_anti_cheat(mode: String, nuke_seconds: Option<i64>) -> ActionFeedb
             trigger_daemon_nudge();
             ActionFeedback {
                 success: true,
-                message: if mode == "NUKE" {
+                message: crate::i18n::tr_msg(&(if mode == "NUKE" {
                     "Modo Nuclear ativado! Nenhuma regra pode ser modificada até o tempo expirar.".to_string()
                 } else {
-                    "Modo Anti-Cheat ativado! Para desativar, conclua o desafio de digitação estrito.".to_string()
-                },
+                    "Modo Anti-Burla ativado! Para desativar, conclua o desafio de digitação estrito.".to_string()
+                })),
             }
         }
         Err(e) => ActionFeedback {
             success: false,
-            message: e,
+            message: crate::i18n::tr_msg(&(e)),
         },
     }
 }
@@ -368,12 +403,12 @@ pub fn disable_anti_cheat(verification_token: String) -> ActionFeedback {
             trigger_daemon_nudge();
             ActionFeedback {
                 success: true,
-                message: "Modo Anti-Cheat desativado com sucesso!".to_string(),
+                message: crate::i18n::tr_msg(&("Modo Anti-Burla desativado com sucesso!".to_string())),
             }
         }
         Err(e) => ActionFeedback {
             success: false,
-            message: e,
+            message: crate::i18n::tr_msg(&(e)),
         },
     }
 }
@@ -489,12 +524,12 @@ pub fn save_rule(
             trigger_daemon_nudge();
             ActionFeedback {
                 success: true,
-                message: format!("Regra '{}' salva com sucesso!", display_name),
+                message: crate::i18n::tr_msg(&(format!("Regra '{}' salva com sucesso!", display_name))),
             }
         }
         Err(e) => ActionFeedback {
             success: false,
-            message: format!("Erro ao salvar regra: {}", e),
+            message: crate::i18n::tr_msg(&(format!("Erro ao salvar regra: {}", e))),
         },
     }
 }
@@ -505,12 +540,12 @@ pub fn delete_rule(entity_id: String) -> ActionFeedback {
             trigger_daemon_nudge();
             ActionFeedback {
                 success: true,
-                message: format!("Regra '{}' removida com sucesso!", entity_id),
+                message: crate::i18n::tr_msg(&(format!("Regra '{}' removida com sucesso!", entity_id))),
             }
         }
         Err(e) => ActionFeedback {
             success: false,
-            message: format!("Erro ao remover regra: {}", e),
+            message: crate::i18n::tr_msg(&(format!("Erro ao remover regra: {}", e))),
         },
     }
 }
@@ -521,16 +556,16 @@ pub fn toggle_entity_block(entity_id: String, blocked: bool) -> ActionFeedback {
             trigger_daemon_nudge();
             ActionFeedback {
                 success: true,
-                message: if blocked {
+                message: crate::i18n::tr_msg(&(if blocked {
                     format!("Entidade '{}' bloqueada completamente!", entity_id)
                 } else {
                     format!("Bloqueio total de '{}' desativado!", entity_id)
-                },
+                })),
             }
         }
         Err(e) => ActionFeedback {
             success: false,
-            message: format!("Erro ao atualizar bloqueio: {}", e),
+            message: crate::i18n::tr_msg(&(format!("Erro ao atualizar bloqueio: {}", e))),
         },
     }
 }
@@ -560,18 +595,32 @@ pub fn get_quarantine_items() -> Vec<QuarantineItemDto> {
         .collect()
 }
 
+/// Tells the Rust side which profile this app build runs as (dev builds use separate
+/// ports/data and never touch system integrations). Call right after `RustLib.init`.
+#[flutter_rust_bridge::frb(sync)]
+pub fn set_chronos_profile(dev: bool) {
+    crate::profile::set_dev(dev);
+}
+
 pub fn debug_disable_anti_cheat() -> ActionFeedback {
+    // Debug escape hatch only exists in dev builds; release builds refuse it.
+    if !crate::profile::is_dev() {
+        return ActionFeedback {
+            success: false,
+            message: crate::i18n::tr_msg(&("Indisponível na versão de release.".to_string())),
+        };
+    }
     match engine::debug_disable_anti_cheat() {
         Ok(_) => {
             trigger_daemon_nudge();
             ActionFeedback {
                 success: true,
-                message: "Anti-Cheat desativado com sucesso (Modo Debug)!".to_string(),
+                message: crate::i18n::tr_msg(&("Anti-Burla desativado com sucesso (Modo Debug)!".to_string())),
             }
         }
         Err(e) => ActionFeedback {
             success: false,
-            message: format!("Erro ao desativar Anti-Cheat: {}", e),
+            message: crate::i18n::tr_msg(&(format!("Erro ao desativar Anti-Burla: {}", e))),
         },
     }
 }
@@ -596,17 +645,27 @@ pub fn get_all_whitelist_groups() -> Vec<WhitelistGroupDto> {
 }
 
 pub fn save_whitelist_group(group_id: String, display_name: String, items: String) -> ActionFeedback {
+    {
+        let before = crate::conflicts::load_current();
+        let mut after = before.clone();
+        let id = if group_id.trim().is_empty() { "__new__".to_string() } else { group_id.trim().to_string() };
+        after.whitelist.retain(|w| w.id != id);
+        after.whitelist.push(crate::conflicts::WhitelistIn { id, name: display_name.clone(), items: items.clone() });
+        if let Err(message) = crate::conflicts::check_new(&before, &after) {
+            return ActionFeedback { success: false, message };
+        }
+    }
     match db::save_whitelist_group(&group_id, &display_name, &items) {
         Ok(_) => {
             trigger_daemon_nudge();
             ActionFeedback {
                 success: true,
-                message: format!("Grupo de Lista Branca '{}' salvo com sucesso!", display_name),
+                message: crate::i18n::tr_msg(&(format!("Grupo de Lista Branca '{}' salvo com sucesso!", display_name))),
             }
         }
         Err(e) => ActionFeedback {
             success: false,
-            message: format!("Erro ao salvar Grupo de Lista Branca: {}", e),
+            message: crate::i18n::tr_msg(&(format!("Erro ao salvar Grupo de Lista Branca: {}", e))),
         },
     }
 }
@@ -617,12 +676,12 @@ pub fn delete_whitelist_group(group_id: String) -> ActionFeedback {
             trigger_daemon_nudge();
             ActionFeedback {
                 success: true,
-                message: "Grupo de Lista Branca removido com sucesso!".to_string(),
+                message: crate::i18n::tr_msg(&("Grupo de Lista Branca removido com sucesso!".to_string())),
             }
         }
         Err(e) => ActionFeedback {
             success: false,
-            message: format!("Erro ao remover Grupo de Lista Branca: {}", e),
+            message: crate::i18n::tr_msg(&(format!("Erro ao remover Grupo de Lista Branca: {}", e))),
         },
     }
 }
@@ -631,15 +690,15 @@ pub fn review_quarantine_item(request_id: String, approved: bool) -> ActionFeedb
     match engine::review_quarantine(&request_id, approved) {
         Ok(_) => ActionFeedback {
             success: true,
-            message: if approved {
+            message: crate::i18n::tr_msg(&(if approved {
                 "Item de quarentena APROVADO para execução.".to_string()
             } else {
                 "Item de quarentena REJEITADO e bloqueado.".to_string()
-            },
+            })),
         },
         Err(e) => ActionFeedback {
             success: false,
-            message: format!("Erro ao revisar quarentena: {}", e),
+            message: crate::i18n::tr_msg(&(format!("Erro ao revisar quarentena: {}", e))),
         },
     }
 }
@@ -738,12 +797,12 @@ pub fn set_theme_mode(mode: String) -> ActionFeedback {
     if db::set_theme_mode(&mode) {
         ActionFeedback {
             success: true,
-            message: format!("Tema alterado para '{}'.", mode),
+            message: crate::i18n::tr_msg(&(format!("Tema alterado para '{}'.", mode))),
         }
     } else {
         ActionFeedback {
             success: false,
-            message: "Falha ao salvar preferência de tema no banco.".to_string(),
+            message: crate::i18n::tr_msg(&("Falha ao salvar preferência de tema no banco.".to_string())),
         }
     }
 }
@@ -762,6 +821,8 @@ pub struct FocusFiltersDto {
     pub yt_educational_mode: bool,
     pub yt_block_sidebar: bool,
     pub yt_block_comments: bool,
+    pub yt_show_only_enabled: bool,
+    pub yt_show_only_types: Vec<String>,
 
     // Instagram
     pub ig_block_reels: bool,
@@ -774,10 +835,12 @@ pub struct FocusFiltersDto {
     // Reddit
     pub rd_block_feed: bool,
     pub rd_block_comments: bool,
+    pub rd_block_nsfw: bool,
 
     // Twitter / X
     pub tw_block_feed: bool,
     pub tw_block_trends: bool,
+    pub tw_block_sensitive: bool,
 
     // LinkedIn
     pub li_block_feed: bool,
@@ -811,6 +874,8 @@ pub fn get_focus_filters() -> FocusFiltersDto {
         yt_educational_mode: f.yt_educational_mode,
         yt_block_sidebar: f.yt_block_sidebar,
         yt_block_comments: f.yt_block_comments,
+        yt_show_only_enabled: f.yt_show_only_enabled,
+        yt_show_only_types: f.yt_show_only_types,
 
         ig_block_reels: f.ig_block_reels,
         ig_block_feed: f.ig_block_feed,
@@ -823,6 +888,8 @@ pub fn get_focus_filters() -> FocusFiltersDto {
 
         tw_block_feed: f.tw_block_feed,
         tw_block_trends: f.tw_block_trends,
+        tw_block_sensitive: f.tw_block_sensitive,
+        rd_block_nsfw: f.rd_block_nsfw,
 
         li_block_feed: f.li_block_feed,
 
@@ -852,6 +919,8 @@ pub fn set_focus_filters(filters: FocusFiltersDto) -> ActionFeedback {
         yt_educational_mode: filters.yt_educational_mode,
         yt_block_sidebar: filters.yt_block_sidebar,
         yt_block_comments: filters.yt_block_comments,
+        yt_show_only_enabled: filters.yt_show_only_enabled,
+        yt_show_only_types: filters.yt_show_only_types,
 
         ig_block_reels: filters.ig_block_reels,
         ig_block_feed: filters.ig_block_feed,
@@ -864,6 +933,8 @@ pub fn set_focus_filters(filters: FocusFiltersDto) -> ActionFeedback {
 
         tw_block_feed: filters.tw_block_feed,
         tw_block_trends: filters.tw_block_trends,
+        tw_block_sensitive: filters.tw_block_sensitive,
+        rd_block_nsfw: filters.rd_block_nsfw,
 
         li_block_feed: filters.li_block_feed,
 
@@ -889,12 +960,12 @@ pub fn set_focus_filters(filters: FocusFiltersDto) -> ActionFeedback {
             }
             ActionFeedback {
                 success: true,
-                message: "Filtros de foco atualizados com sucesso.".to_string(),
+                message: crate::i18n::tr_msg(&("Filtros de foco atualizados com sucesso.".to_string())),
             }
         }
         Err(msg) => ActionFeedback {
             success: false,
-            message: msg,
+            message: crate::i18n::tr_msg(&(msg)),
         },
     }
 }
@@ -923,12 +994,7 @@ pub struct TagDisplayEntryDto {
 fn resolve_steam_lang_pair(lang: Option<String>) -> (&'static str, &'static str) {
     if let Some(raw) = lang.as_deref() {
         let norm = db::normalize_primary_language(raw);
-        if norm == "en-US" {
-            return ("english", "US");
-        }
-        if norm == "pt-BR" {
-            return ("brazilian", "BR");
-        }
+        return if norm == "pt-BR" { ("brazilian", "BR") } else { ("english", "US") };
     }
     db::get_steam_language_and_country()
 }
@@ -943,12 +1009,12 @@ pub fn set_primary_language(lang: String) -> ActionFeedback {
             trigger_daemon_nudge();
             ActionFeedback {
                 success: true,
-                message: saved,
+                message: crate::i18n::tr_msg(&(saved)),
             }
         }
         Err(e) => ActionFeedback {
             success: false,
-            message: format!("Erro ao salvar idioma: {e}"),
+            message: crate::i18n::tr_msg(&(format!("Erro ao salvar idioma: {e}"))),
         },
     }
 }
@@ -1071,17 +1137,91 @@ pub fn configure_launcher_store_proxy(enable: bool) -> ActionFeedback {
     if !enable && engine::get_anti_cheat_state().is_active {
         return ActionFeedback {
             success: false,
-            message: "Modo Anti-Cheat está ativo! Desativar a proteção de loja dos launchers exige desativar o Anti-Cheat primeiro.".to_string(),
+            message: crate::i18n::tr_msg(&("Modo Anti-Burla está ativo! Desativar a proteção de loja dos launchers exige desativar o Anti-Burla primeiro.".to_string())),
         };
     }
     match crate::launchers::configure_native_launcher_proxy(enable) {
         Ok(msg) => ActionFeedback {
             success: true,
-            message: msg,
+            message: crate::i18n::tr_msg(&(msg)),
         },
         Err(msg) => ActionFeedback {
             success: false,
-            message: msg,
+            message: crate::i18n::tr_msg(&(msg)),
         },
     }
+}
+
+/// User's own anti-cheat challenge texts (drawn together with the built-in ones).
+#[flutter_rust_bridge::frb(sync)]
+pub fn get_custom_challenge_texts() -> Vec<String> {
+    engine::custom_challenge_texts()
+}
+
+/// Saves the user's challenge texts; refused while anti-cheat is active.
+pub fn set_custom_challenge_texts(texts: Vec<String>) -> ActionFeedback {
+    match engine::set_custom_challenge_texts(texts) {
+        Ok(()) => ActionFeedback { success: true, message: crate::i18n::tr_msg("Textos do desafio salvos.") },
+        Err(message) => ActionFeedback { success: false, message: crate::i18n::tr_msg(&message) },
+    }
+}
+
+/// Reasons a challenge text is too easy to type (empty = fine), translated.
+#[flutter_rust_bridge::frb(sync)]
+pub fn analyze_challenge_text(text: String) -> Vec<String> {
+    engine::challenge_text_issues(&text).iter().map(|m| crate::i18n::tr_msg(m)).collect()
+}
+
+/// Whether custom challenge texts must pass the "too easy" check (default on).
+#[flutter_rust_bridge::frb(sync)]
+pub fn get_challenge_strength_check() -> bool {
+    engine::challenge_strength_check_enabled()
+}
+
+pub fn set_challenge_strength_check(enabled: bool) -> ActionFeedback {
+    match engine::set_challenge_strength_check(enabled) {
+        Ok(()) => ActionFeedback { success: true, message: String::new() },
+        Err(message) => ActionFeedback { success: false, message: crate::i18n::tr_msg(&message) },
+    }
+}
+
+/// Draws another challenge text (the challenge dialog calls this when it closes).
+pub fn redraw_challenge_text() -> ActionFeedback {
+    match engine::redraw_challenge_text() {
+        Ok(()) => ActionFeedback { success: true, message: String::new() },
+        Err(message) => ActionFeedback { success: false, message },
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct ConflictDto {
+    pub kind: String,
+    pub message: String,
+}
+
+/// Existing conflicts between block groups, whitelists and YouTube "show only".
+#[flutter_rust_bridge::frb(sync)]
+pub fn get_conflicts() -> Vec<ConflictDto> {
+    crate::conflicts::find_conflicts(&crate::conflicts::load_current())
+        .into_iter()
+        .map(|c| ConflictDto { kind: c.kind.to_string(), message: crate::i18n::tr_msg(&c.message()) })
+        .collect()
+}
+
+#[derive(Debug, Clone)]
+pub struct ExtensionReportDto {
+    /// chrome, chromium, brave, edge, opera, vivaldi or firefox
+    pub browser: String,
+    pub version: String,
+    /// Seconds since the extension last reported (it reports every few seconds while open).
+    pub age_seconds: i64,
+}
+
+/// Extension version reported live by each browser (more reliable than profile files).
+#[flutter_rust_bridge::frb(sync)]
+pub fn get_extension_reports() -> Vec<ExtensionReportDto> {
+    crate::local_api::extension_reports()
+        .into_iter()
+        .map(|(browser, version, age_ms)| ExtensionReportDto { browser, version, age_seconds: age_ms / 1000 })
+        .collect()
 }

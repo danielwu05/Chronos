@@ -1,3 +1,4 @@
+import 'package:chronos_app/services/app_locale.dart';
 import 'package:flutter/material.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:chronos_app/services/browser_extension_installer.dart';
@@ -138,6 +139,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     }
 
     // 2. Conclui o onboarding
+    // Keep the language shown during the setup.
+    await setPrimaryLanguage(lang: kAppLanguages.firstWhere((l) => localeForCode(l.$1) == appLocale.value, orElse: () => kAppLanguages.first).$1);
     final res = await saveOnboardingChoice(
       appMode: 'SELF_CONTROL',
       deviceRole: 'NONE',
@@ -193,6 +196,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
 
   Future<void> _finishParentalSetup() async {
     await BrowserExtensionInstaller.installAll(forceMandatory: true);
+    // Keep the language shown during the setup.
+    await setPrimaryLanguage(lang: kAppLanguages.firstWhere((l) => localeForCode(l.$1) == appLocale.value, orElse: () => kAppLanguages.first).$1);
     final res = await saveOnboardingChoice(
       appMode: 'PARENTAL',
       deviceRole: _deviceRole,
@@ -263,12 +268,43 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   }
 
   // STEP 0: Seleção de Modo (Pessoal vs Parental)
+  /// First choice of the setup: app language (pre-selected from the system language).
+  Widget _buildLanguagePicker() {
+    final current = kAppLanguages.firstWhere(
+      (l) => localeForCode(l.$1) == appLocale.value,
+      orElse: () => kAppLanguages.first,
+    ).$1;
+    return Align(
+      alignment: Alignment.centerRight,
+      child: SizedBox(
+        width: 220,
+        child: DropdownButtonFormField<String>(
+          initialValue: current,
+          isDense: true,
+          decoration: const InputDecoration(
+            prefixIcon: Icon(Icons.translate_outlined, size: 18),
+            border: OutlineInputBorder(),
+            isDense: true,
+          ),
+          items: [for (final (code, label) in kAppLanguages) DropdownMenuItem(value: code, child: Text(label))],
+          onChanged: (code) async {
+            if (code == null) return;
+            final res = await setPrimaryLanguage(lang: code);
+            setAppLanguageCode(res.success && res.message.isNotEmpty ? res.message : code);
+          },
+        ),
+      ),
+    );
+  }
+
   Widget _buildStep1ModeSelection() {
     return Column(
       key: const ValueKey('step_0_mode'),
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        _buildLanguagePicker(),
+        const SizedBox(height: 8),
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
@@ -285,7 +321,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         ),
         const SizedBox(height: 16),
         Text(
-          'Bem-vindo ao Chronos',
+          tr.bemVindoAoChronos,
           style: Theme.of(context).textTheme.headlineMedium?.copyWith(
                 fontWeight: FontWeight.bold,
                 color: Colors.white,
@@ -293,9 +329,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
           textAlign: TextAlign.center,
         ),
         const SizedBox(height: 8),
-        const Text(
-          'Seu motor de foco estrito e produtividade para Linux.\n'
-          'Como você pretende utilizar este aplicativo?',
+        Text(
+          tr.seuMotorDeFocoEstritoE,
           style: TextStyle(color: Colors.white70, fontSize: 15),
           textAlign: TextAlign.center,
         ),
@@ -305,15 +340,15 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         _SelectionCard(
           icon: Icons.psychology_outlined,
           iconColor: Colors.tealAccent,
-          title: 'Controle Pessoal (Auto-Controle)',
-          subtitle: 'Para gerenciar seu próprio tempo e estudos.',
-          features: const [
+          title: tr.controlePessoalAutoControle,
+          subtitle: tr.paraGerenciarSeuProprioTempoE,
+          features: [
             'Personalização de tempo de tela e bloqueios sob medida para seus hábitos.',
-            'Modo Catraca (Ratchet): Reduções são imediatas, aumentos são bloqueados.',
-            '2 Tokens mensais de emergência (+1h com penalidade de 24h de lazer travado).',
-            'Bloqueio ativo com sobreposição de janela e pausa automática de mídia.',
+            tr.modoCatracaRatchetReducoesSaoImediatas,
+            tr.t2TokensMensaisDeEmergencia1h,
+            tr.bloqueioAtivoComSobreposicaoDeJanela,
           ],
-          buttonText: 'Configurar Bloqueios Pessoais',
+          buttonText: tr.configurarBloqueiosPessoais,
           buttonColor: Colors.teal.shade700,
           onPressed: () {
             setState(() {
@@ -328,15 +363,15 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         _SelectionCard(
           icon: Icons.family_restroom_outlined,
           iconColor: Colors.purpleAccent,
-          title: 'Controle Parental (Supervisão)',
-          subtitle: 'Para pais e responsáveis gerenciarem dispositivos de dependentes.',
-          features: const [
+          title: tr.controleParentalSupervisao,
+          subtitle: tr.paraPaisEResponsaveisGerenciaremDispositivos,
+          features: [
             'Autoridade remota: Regras e limites controlados pelo dispositivo do responsável.',
-            'Dispositivo do dependente protegido contra alterações e desvios.',
-            'Pareamento seguro via QR Code ou Senha mestra.',
-            'Gestão de aprovação de binários e quarentena de aplicativos.',
+            tr.dispositivoDoDependenteProtegidoContraAlteracoes,
+            tr.pareamentoSeguroViaQrCodeOu,
+            tr.gestaoDeAprovacaoDeBinariosE,
           ],
-          buttonText: 'Configurar Controle Parental',
+          buttonText: tr.configurarControleParental,
           buttonColor: Colors.purple.shade700,
           onPressed: () {
             setState(() {
@@ -367,11 +402,11 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    'Personalização de Bloqueio & Tempo de Tela',
+                    tr.personalizacaoDeBloqueioTempoDeTela,
                     style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
                   ),
-                  const Text(
-                    'Ajuste o tempo de tela diário inicial e o nível de atrito estrito',
+                  Text(
+                    tr.ajusteOTempoDeTelaDiario,
                     style: TextStyle(color: Colors.white60, fontSize: 13),
                   ),
                 ],
@@ -388,8 +423,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            const Text(
-              'Distrações a Bloquear',
+            Text(
+              tr.distracoesABloquear,
               style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
             ),
             FilledButton.tonalIcon(
@@ -398,7 +433,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                 foregroundColor: Colors.tealAccent,
               ),
               icon: const Icon(Icons.add, size: 18),
-              label: const Text('Adicionar App ou Site'),
+              label: Text(tr.adicionarAppOuSite),
               onPressed: _addNewBlockDraft,
             ),
           ],
@@ -415,12 +450,12 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               borderRadius: BorderRadius.circular(14),
               border: Border.all(color: Colors.white12),
             ),
-            child: const Column(
+            child: Column(
               children: [
                 Icon(Icons.shield_outlined, color: Colors.tealAccent, size: 32),
                 SizedBox(height: 8),
                 Text(
-                  'Nenhuma sessão pré-configurada.\nClique em "Adicionar App ou Site" acima para criar suas sessões personalizadas.',
+                  tr.nenhumaSessaoPreConfiguradaCliqueEm,
                   textAlign: TextAlign.center,
                   style: TextStyle(color: Colors.white60, fontSize: 13),
                 ),
@@ -471,8 +506,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                     const SizedBox(height: 8),
                     Row(
                       children: [
-                        const Text(
-                          'Tempo de Tela Diário:',
+                        Text(
+                          tr.tempoDeTelaDiario,
                           style: TextStyle(color: Colors.white70, fontSize: 12),
                         ),
                         const SizedBox(width: 12),
@@ -481,7 +516,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                             spacing: 8,
                             children: [
                               ChoiceChip(
-                                label: const Text('Bloqueio Total'),
+                                label: Text(tr.bloqueioTotal),
                                 selected: draft.isCompletelyBlocked,
                                 onSelected: (sel) {
                                   setState(() {
@@ -491,7 +526,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                                 },
                               ),
                               ChoiceChip(
-                                label: const Text('15 min'),
+                                label: Text(tr.t15Min),
                                 selected: !draft.isCompletelyBlocked && draft.quotaMinutes == 15,
                                 onSelected: (sel) {
                                   setState(() {
@@ -501,7 +536,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                                 },
                               ),
                               ChoiceChip(
-                                label: const Text('30 min'),
+                                label: Text(tr.t30Min),
                                 selected: !draft.isCompletelyBlocked && draft.quotaMinutes == 30,
                                 onSelected: (sel) {
                                   setState(() {
@@ -511,7 +546,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                                 },
                               ),
                               ChoiceChip(
-                                label: const Text('1 hora'),
+                                label: Text(tr.t1Hora),
                                 selected: !draft.isCompletelyBlocked && draft.quotaMinutes == 60,
                                 onSelected: (sel) {
                                   setState(() {
@@ -521,7 +556,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                                 },
                               ),
                               ChoiceChip(
-                                label: const Text('2 horas'),
+                                label: Text(tr.t2Horas),
                                 selected: !draft.isCompletelyBlocked && draft.quotaMinutes == 120,
                                 onSelected: (sel) {
                                   setState(() {
@@ -556,12 +591,12 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Row(
+                Row(
                   children: [
                     Icon(Icons.shield_outlined, color: Colors.tealAccent, size: 20),
                     SizedBox(width: 8),
                     Text(
-                      'Diretrizes de Enforcement do Chronos',
+                      tr.diretrizesDeEnforcementDoChronos,
                       style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
                     ),
                   ],
@@ -569,9 +604,9 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                 const SizedBox(height: 12),
                 SwitchListTile(
                   contentPadding: EdgeInsets.zero,
-                  title: const Text('Ativar Trava da Catraca (24h iniciais)', style: TextStyle(fontSize: 14)),
-                  subtitle: const Text(
-                    'Impede aumentos de tempo de tela logo no primeiro dia. Você só poderá reduzir o tempo de tela.',
+                  title: Text(tr.ativarTravaDaCatraca24hIniciais, style: TextStyle(fontSize: 14)),
+                  subtitle: Text(
+                    tr.impedeAumentosDeTempoDeTela,
                     style: TextStyle(fontSize: 12, color: Colors.white60),
                   ),
                   value: _enableRatchet24h,
@@ -580,9 +615,9 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                 ),
                 SwitchListTile(
                   contentPadding: EdgeInsets.zero,
-                  title: const Text('Sequestro Visual de Foco (Always-on-top Fullscreen)', style: TextStyle(fontSize: 14)),
-                  subtitle: const Text(
-                    'Maximiza e trava a janela do Chronos por cima ao estourar o tempo de tela.',
+                  title: Text(tr.sequestroVisualDeFocoAlwaysOn, style: TextStyle(fontSize: 14)),
+                  subtitle: Text(
+                    tr.maximizaETravaAJanelaDo,
                     style: TextStyle(fontSize: 12, color: Colors.white60),
                   ),
                   value: _enableOverlay,
@@ -591,9 +626,9 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                 ),
                 SwitchListTile(
                   contentPadding: EdgeInsets.zero,
-                  title: const Text('Pausa Ativa de Mídia (playerctl / MPRIS2)', style: TextStyle(fontSize: 14)),
-                  subtitle: const Text(
-                    'Interrompe automaticamente vídeos e músicas em segundo plano.',
+                  title: Text(tr.pausaAtivaDeMidiaPlayerctlMpris2, style: TextStyle(fontSize: 14)),
+                  subtitle: Text(
+                    tr.interrompeAutomaticamenteVideosEMusicasEm,
                     style: TextStyle(fontSize: 12, color: Colors.white60),
                   ),
                   value: _enableMediaPause,
@@ -614,8 +649,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
           ),
           onPressed: _finishSelfControlWithCustomization,
-          child: const Text(
-            'Salvar Bloqueios e Iniciar Chronos',
+          child: Text(
+            tr.salvarBloqueiosEIniciarChronos,
             style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
           ),
         ),
@@ -638,14 +673,14 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
             ),
             const SizedBox(width: 8),
             Text(
-              'Controle Parental',
+              tr.controleParental,
               style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
             ),
           ],
         ),
         const SizedBox(height: 12),
-        const Text(
-          'Qual é o papel deste computador na família?',
+        Text(
+          tr.qualEOPapelDesteComputador,
           style: TextStyle(color: Colors.white70, fontSize: 16),
         ),
         const SizedBox(height: 24),
@@ -654,14 +689,14 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         _SelectionCard(
           icon: Icons.admin_panel_settings_outlined,
           iconColor: Colors.amberAccent,
-          title: 'Dispositivo do Responsável (Pai / Mãe)',
-          subtitle: 'Este computador terá autoridade para controlar regras e tempo de tela.',
-          features: const [
+          title: tr.dispositivoDoResponsavelPaiMae,
+          subtitle: tr.esteComputadorTeraAutoridadeParaControlar,
+          features: [
             'Acesso completo para alterar tempo de tela e aprovar tempo adicional.',
-            'Recebe solicitações de emergência e aprovações de quarentena.',
-            'Conecta ao computador do filho usando QR Code ou Senha.',
+            tr.recebeSolicitacoesDeEmergenciaEAprovacoes,
+            tr.conectaAoComputadorDoFilhoUsando,
           ],
-          buttonText: 'Configurar como Dispositivo Pai',
+          buttonText: tr.configurarComoDispositivoPai,
           buttonColor: Colors.amber.shade800,
           onPressed: () {
             setState(() {
@@ -677,14 +712,14 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         _SelectionCard(
           icon: Icons.child_care_outlined,
           iconColor: Colors.blueAccent,
-          title: 'Dispositivo do Dependente (Filho)',
-          subtitle: 'Este computador será monitorado e protegido contra distrações.',
-          features: const [
+          title: tr.dispositivoDoDependenteFilho,
+          subtitle: tr.esteComputadorSeraMonitoradoEProtegido,
+          features: [
             'O daemon monitora janelas e mídia em segundo plano.',
-            'As alterações de tempo de tela exigem autorização ou senha do responsável.',
-            'Exibe QR Code e código PIN para ser conectado pelo responsável.',
+            tr.asAlteracoesDeTempoDeTela,
+            tr.exibeQrCodeECodigoPin,
           ],
-          buttonText: 'Configurar como Dispositivo Filho',
+          buttonText: tr.configurarComoDispositivoFilho,
           buttonColor: Colors.blue.shade700,
           onPressed: () {
             setState(() {
@@ -716,7 +751,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
             ),
             const SizedBox(width: 8),
             Text(
-              isChild ? 'Pareamento: Dispositivo Filho' : 'Pareamento: Dispositivo do Responsável',
+              isChild ? tr.pareamentoDispositivoFilho : tr.pareamentoDispositivoDoResponsavel,
               style: Theme.of(context).textTheme.titleLarge?.copyWith(fontWeight: FontWeight.bold),
             ),
           ],
@@ -724,8 +759,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         const SizedBox(height: 8),
         Text(
           isChild
-              ? 'Conecte este computador ao aplicativo do responsável utilizando QR Code ou Código PIN/Senha.'
-              : 'Escaneie o QR Code ou insira o Código PIN exibido na tela do dispositivo do filho.',
+              ? tr.conecteEsteComputadorAoAplicativoDo
+              : tr.escaneieOQrCodeOuInsira,
           style: const TextStyle(color: Colors.white70, fontSize: 14),
         ),
         const SizedBox(height: 24),
@@ -740,11 +775,11 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const TabBar(
+                  TabBar(
                     indicatorColor: Colors.purpleAccent,
                     tabs: [
-                      Tab(icon: Icon(Icons.qr_code_2), text: 'Via QR Code'),
-                      Tab(icon: Icon(Icons.password), text: 'Via Senha / PIN'),
+                      Tab(icon: Icon(Icons.qr_code_2), text: tr.viaQrCode),
+                      Tab(icon: Icon(Icons.password), text: tr.viaSenhaPin),
                     ],
                   ),
                   const SizedBox(height: 20),
@@ -805,7 +840,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
           ),
           onPressed: _finishParentalSetup,
           child: Text(
-            isChild ? 'Concluir e Iniciar Proteção' : 'Concluir e Abrir Painel do Responsável',
+            isChild ? tr.concluirEIniciarProtecao : tr.concluirEAbrirPainelDoResponsavel,
             style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
           ),
         ),
@@ -837,7 +872,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Row(
+            Row(
               children: [
                 CircleAvatar(
                   backgroundColor: Colors.blueAccent,
@@ -850,12 +885,12 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        'Proteção Obrigatória em Todos os Navegadores',
+                        tr.protecaoObrigatoriaEmTodosOsNavegadores,
                         style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
                       ),
                       SizedBox(height: 2),
                       Text(
-                        'Configura todos os navegadores do dispositivo para exibir o tempo restante de uso e aplicar filtros HTML/CSS (Shorts, Modo Educativo, Grayscale). A remoção só é liberada após verificação Anti-Cheat.',
+                        tr.configuraTodosOsNavegadoresDoDispositivo,
                         style: TextStyle(fontSize: 12, color: Colors.white70),
                       ),
                     ],
@@ -881,8 +916,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                   : const Icon(Icons.security_update_good, size: 17),
               label: Text(
                 _scanningBrowsers
-                    ? 'Instalando & Configurando...'
-                    : 'Instalar / Atualizar em Todos os Navegadores',
+                    ? tr.instalandoConfigurando
+                    : tr.instalarAtualizarEmTodosOsNavegadores,
                 style: const TextStyle(fontSize: 12.5),
               ),
               onPressed: _scanningBrowsers
@@ -899,8 +934,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                             final launched = await ChronosGuardService.launchInstallerInTerminal();
                             showSnack(
                               launched
-                                  ? 'Terminal aberto! Digite sua senha sudo uma vez para concluir o Guard.'
-                                  : 'Execute manualmente: ${ChronosGuardService.getInstallCliCommand()}',
+                                  ? tr.terminalAbertoDigiteSuaSenhaSudo
+                                  : tr.executeManualmenteP0(ChronosGuardService.getInstallCliCommand()),
                               launched,
                             );
                           },
@@ -944,8 +979,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                 final launched = await ChronosGuardService.launchInstallerInTerminal();
                 showSnack(
                   launched
-                      ? 'Terminal aberto! Digite sua senha sudo uma única vez.'
-                      : 'Execute no terminal: ${ChronosGuardService.getInstallCliCommand()}',
+                      ? tr.terminalAbertoDigiteSuaSenhaSudo2
+                      : tr.executeNoTerminalP0(ChronosGuardService.getInstallCliCommand()),
                   launched,
                 );
               },
@@ -974,8 +1009,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
           ),
         ),
         const SizedBox(height: 12),
-        const Text(
-          'Aponte o dispositivo do responsável para escanear este QR Code.',
+        Text(
+          tr.aponteODispositivoDoResponsavelPara,
           style: TextStyle(color: Colors.white70, fontSize: 13),
           textAlign: TextAlign.center,
         ),
@@ -989,8 +1024,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
       children: [
         const Icon(Icons.qr_code_scanner, size: 64, color: Colors.purpleAccent),
         const SizedBox(height: 12),
-        const Text(
-          'Se estiver usando a versão mobile ou câmera, aponte para o QR Code na tela do filho.',
+        Text(
+          tr.seEstiverUsandoAVersaoMobile,
           style: TextStyle(color: Colors.white70, fontSize: 13),
           textAlign: TextAlign.center,
         ),
@@ -998,8 +1033,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         TextField(
           controller: _codeInputController,
           decoration: InputDecoration(
-            labelText: 'Ou cole a chave/URI do QR Code aqui',
-            hintText: 'chronos://pair?id=...',
+            labelText: tr.ouColeAChaveUriDo,
+            hintText: tr.chronosPairId,
             suffixIcon: IconButton(
               icon: const Icon(Icons.arrow_forward),
               onPressed: () => _tryPairCode(_codeInputController.text),
@@ -1014,8 +1049,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     return Column(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        const Text(
-          'Código PIN de Pareamento deste Dispositivo:',
+        Text(
+          tr.codigoPinDePareamentoDesteDispositivo,
           style: TextStyle(color: Colors.white70, fontSize: 13),
         ),
         const SizedBox(height: 10),
@@ -1041,9 +1076,9 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
         TextField(
           controller: _passwordController,
           obscureText: true,
-          decoration: const InputDecoration(
-            labelText: 'Definir Senha Mestra de Desbloqueio Local (Opcional)',
-            hintText: 'Digite uma senha para alterar tempo de tela presencialmente',
+          decoration: InputDecoration(
+            labelText: tr.definirSenhaMestraDeDesbloqueioLocal,
+            hintText: tr.digiteUmaSenhaParaAlterarTempo,
             border: OutlineInputBorder(),
           ),
         ),
@@ -1055,8 +1090,8 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
     return Column(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        const Text(
-          'Digite o Código PIN ou Senha exibida na tela do filho:',
+        Text(
+          tr.digiteOCodigoPinOuSenha,
           style: TextStyle(color: Colors.white70, fontSize: 13),
         ),
         const SizedBox(height: 16),
@@ -1064,15 +1099,15 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
           controller: _codeInputController,
           textAlign: TextAlign.center,
           style: const TextStyle(fontSize: 22, letterSpacing: 3, fontFamily: 'monospace'),
-          decoration: const InputDecoration(
-            hintText: 'CHR-XXXX ou Senha',
+          decoration: InputDecoration(
+            hintText: tr.chrXxxxOuSenha,
             border: OutlineInputBorder(),
           ),
         ),
         const SizedBox(height: 16),
         ElevatedButton.icon(
           icon: const Icon(Icons.link),
-          label: const Text('Validar e Parear'),
+          label: Text(tr.validarEParear),
           onPressed: () => _tryPairCode(_codeInputController.text),
         ),
       ],
