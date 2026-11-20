@@ -153,7 +153,14 @@ MyApplication* my_application_new() {
   // the application to be recognized beyond its binary name.
   g_set_prgname(APPLICATION_ID);
 
+  // G_APPLICATION_DEFAULT_FLAGS only exists since GLib 2.74 (the CI builds on Ubuntu
+  // 22.04 with 2.72); G_APPLICATION_FLAGS_NONE is deprecated (-Werror) on newer GLib.
+#if GLIB_CHECK_VERSION(2, 74, 0)
+  const GApplicationFlags app_flags = G_APPLICATION_DEFAULT_FLAGS;
+#else
+  const GApplicationFlags app_flags = G_APPLICATION_FLAGS_NONE;
+#endif
   return MY_APPLICATION(g_object_new(my_application_get_type(),
                                      "application-id", APPLICATION_ID, "flags",
-                                     G_APPLICATION_DEFAULT_FLAGS, nullptr));
+                                     app_flags, nullptr));
 }
